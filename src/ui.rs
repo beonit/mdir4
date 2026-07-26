@@ -194,6 +194,25 @@ fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         Block::default().style(palette::role(ThemeRole::McdBackground)),
         viewport,
     );
+    if tree.is_loading_path(&state.current_path) {
+        let message = centered_rect(viewport.width.saturating_sub(8).min(48), 3, viewport);
+        frame.render_widget(
+            Paragraph::new("Loading current directory tree…")
+                .alignment(Alignment::Center)
+                .style(palette::role(ThemeRole::McdBackground)),
+            message,
+        );
+        frame.render_widget(
+            Paragraph::new("Esc Cancel").style(palette::role(ThemeRole::McdBackground)),
+            Rect::new(
+                viewport.x,
+                viewport.y.saturating_add(viewport.height.saturating_sub(1)),
+                viewport.width,
+                1,
+            ),
+        );
+        return;
+    }
     let header = Rect::new(viewport.x, viewport.y, viewport.width, 1);
     let body = Rect::new(
         viewport.x,
@@ -1012,6 +1031,23 @@ mod tests {
         assert!(output.contains("PgUp/PgDn"));
         assert!(!output.contains("stale-main.txt"));
         assert!(!output.contains("Files 1"));
+    }
+
+    #[test]
+    fn mcd_hides_partial_ancestor_tree_until_loading_finishes() {
+        let mut state = state_with(Vec::new(), 80, 25);
+        state.current_path = PathBuf::from("/Users/me/project");
+        let mut tree = crate::mcd::tree::DirectoryTree::default();
+        let root = tree.add_root(PathBuf::from("/"));
+        tree.reveal_path(&state.current_path);
+        tree.set_loading(root);
+        state.mcd = Some(tree);
+        state.screen = Screen::Mcd;
+
+        let output = rendered(&state, 80, 25);
+        assert!(output.contains("Loading current directory tree"));
+        assert!(!output.contains("Users"));
+        assert!(!output.contains("project"));
     }
 
     #[test]

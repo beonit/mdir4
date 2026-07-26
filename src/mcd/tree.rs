@@ -141,6 +141,12 @@ impl DirectoryTree {
             .map(|node| (node.id, node.path.clone()))
     }
 
+    pub fn is_loading_path(&self, path: &Path) -> bool {
+        path.ancestors()
+            .filter_map(|ancestor| self.node_for_path(ancestor))
+            .any(|node| node.state == LoadState::Loading)
+    }
+
     pub fn toggle(&mut self) {
         if let Some(id) = self.visible_rows().get(self.selected).map(|row| row.id)
             && let Some(node) = self.nodes.get_mut(&id)
@@ -359,6 +365,9 @@ mod tests {
                 .1,
             PathBuf::from("/")
         );
+        let root = tree.node_for_path(Path::new("/")).unwrap().id;
+        tree.set_loading(root);
+        assert!(tree.is_loading_path(Path::new("/Users/me/project")));
     }
 
     #[test]
