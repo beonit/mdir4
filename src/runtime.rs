@@ -25,6 +25,7 @@ use crate::plugins::git::{
     local::{GitCliMutationBackend, GitMutationBackend},
     model::GitReadBackend,
     real_backend::GitCliReadBackend,
+    stash::{GitCliStashBackend, GitStashBackend},
 };
 use crate::{
     adapters::{
@@ -464,11 +465,31 @@ impl EffectWorker {
                         let result = GitCliBranchBackend.checkout(&directory, &name);
                         Action::GitCheckoutCompleted { result }
                     }
+                    Effect::LoadGitStashes(directory) => {
+                        let result = GitCliStashBackend.list(&directory);
+                        Action::GitStashesLoaded { result }
+                    }
+                    Effect::ApplyGitStash {
+                        directory,
+                        reference,
+                    } => {
+                        let result = GitCliStashBackend.apply(&directory, &reference);
+                        Action::GitStashApplied { result }
+                    }
+                    Effect::DropGitStash {
+                        directory,
+                        reference,
+                    } => {
+                        let result = GitCliStashBackend.drop(&directory, &reference);
+                        Action::GitStashDropped { result }
+                    }
                     Effect::RunGitMutation { directory, plan } => {
                         let action = match plan.kind {
                             crate::plugins::git::local::MutationKind::Stage => "Stage",
                             crate::plugins::git::local::MutationKind::Unstage => "Unstage",
                             crate::plugins::git::local::MutationKind::Commit { .. } => "Commit",
+                            crate::plugins::git::local::MutationKind::Stash { .. } => "Stash",
+                            crate::plugins::git::local::MutationKind::Discard => "Discard",
                         }
                         .to_string();
                         let result = GitCliMutationBackend::new(directory).execute(&plan);
@@ -1039,6 +1060,8 @@ mod tests {
             git_log_detail: None,
             git_branches: Vec::new(),
             git_branch_selected: 0,
+            git_stashes: Vec::new(),
+            git_stash_selected: 0,
         }
     }
 

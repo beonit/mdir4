@@ -4,6 +4,7 @@ use mdir4::plugins::git::{
     local::{GitCliMutationBackend, GitMutationBackend, MutationKind, plan_targets},
     model::{DiffTarget, GitReadBackend},
     real_backend::GitCliReadBackend,
+    stash::{GitCliStashBackend, GitStashBackend},
 };
 use std::{fs, process::Command};
 use tempfile::tempdir;
@@ -119,6 +120,80 @@ fn cli_mutation_backend_commits_staged_changes_with_the_configured_identity() {
     assert_eq!(
         String::from_utf8_lossy(&subject.stdout).trim(),
         "add new file"
+    );
+}
+
+#[test]
+fn cli_mutation_backend_stashes_all_changes_and_discards_only_tracked_changes() {
+    let temp = tempdir().unwrap();
+    git(temp.path(), &["init", "-q"]);
+    git(temp.path(), &["config", "user.name", "Test"]);
+    git(
+        temp.path(),
+        &["config", "user.email", "test@example.invalid"],
+    );
+    fs::write(temp.path().join("note.txt"), "one\n").unwrap();
+    git(temp.path(), &["add", "note.txt"]);
+    git(temp.path(), &["commit", "-qm", "initial"]);
+    fs::write(temp.path().join("note.txt"), "two\n").unwrap();
+    fs::write(temp.path().join("new.txt"), "new\n").unwrap();
+    let backend = GitCliMutationBackend::new(temp.path());
+    backend
+        .execute(&mdir4::plugins::git::local::MutationPlan {
+            kind: MutationKind::Stash {
+                message: "work".into(),
+            },
+            targets: Vec::new(),
+        })
+        .unwrap();
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(temp.path())
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&status.stdout).trim().is_empty());
+    let stash = Command::new("git")
+        .arg("-C")
+        .arg(temp.path())
+        .args(["stash", "list"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&stash.stdout).contains("work"));
+
+    let stash_backend = GitCliStashBackend;
+    let entries = stash_backend.list(temp.path()).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].message.ends_with(": work"));
+    stash_backend
+        .apply(temp.path(), &entries[0].reference)
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(temp.path().join("note.txt")).unwrap(),
+        "two\n"
+    );
+    assert!(temp.path().join("new.txt").exists());
+    stash_backend
+        .drop(temp.path(), &entries[0].reference)
+        .unwrap();
+    assert!(stash_backend.list(temp.path()).unwrap().is_empty());
+
+    git(
+        temp.path(),
+        &["restore", "--staged", "--worktree", "note.txt"],
+    );
+    fs::remove_file(temp.path().join("new.txt")).unwrap();
+    fs::write(temp.path().join("note.txt"), "three\n").unwrap();
+    let path = mdir4::plugins::git::model::RepoRelativePath::new("note.txt").unwrap();
+    backend
+        .execute(&mdir4::plugins::git::local::MutationPlan {
+            kind: MutationKind::Discard,
+            targets: vec![path],
+        })
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(temp.path().join("note.txt")).unwrap(),
+        "one\n"
     );
 }
 

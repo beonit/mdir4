@@ -16,6 +16,7 @@ pub mod history;
 pub mod local;
 pub mod model;
 pub mod real_backend;
+pub mod stash;
 pub mod state;
 pub mod status_summary;
 pub mod status_view;

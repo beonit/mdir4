@@ -2,7 +2,7 @@ use mdir4::{
     plugins::git::{
         local::{
             CommitIdentity, FakeGitMutationBackend, MutationKind, execute_with_lease, plan_commit,
-            plan_targets, preflight_stage,
+            plan_targets, preflight_discard, preflight_stage,
         },
         model::{GitStatus, RepoRelativePath},
     },
@@ -24,6 +24,13 @@ fn mutation_plan_rejects_empty_targets_and_shared_lease_rejects_overlap() {
     let active = coordinator.try_acquire().unwrap();
     assert!(execute_with_lease(&backend, &coordinator, &plan).is_err());
     drop(active);
+}
+
+#[test]
+fn discard_preflight_allows_only_tracked_changes() {
+    let changed = RepoRelativePath::new("changed.txt").unwrap();
+    assert!(preflight_discard(&[(changed.clone(), GitStatus::Modified)]).is_ok());
+    assert!(preflight_discard(&[(changed, GitStatus::Untracked)]).is_err());
 }
 
 #[test]

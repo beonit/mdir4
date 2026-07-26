@@ -61,6 +61,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         Screen::GitStatus => render_git_status(frame, state, metrics.viewport),
         Screen::GitLog => render_git_log(frame, state, metrics.viewport),
         Screen::GitBranch => render_git_branches(frame, state, metrics.viewport),
+        Screen::GitStash => render_git_stashes(frame, state, metrics.viewport),
         Screen::Main => {}
     }
 }
@@ -93,8 +94,41 @@ fn render_git_status(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         .collect();
     frame.render_widget(
         Paragraph::new(rows).block(dialog_block(" Git Status ").title_bottom(
-                "Enter/F3 Diff  F5 Stage  F6 Unstage  F7 Commit  F10 Log  F11 Branch  Space Mark  R Refresh  Esc Close",
+                "F3 Diff  F5 Stage  F6 Unstage  F7 Commit  F8 Stash  F10 Log  F11 Branch  F12 Discard  Space Mark  R Refresh  Esc Close",
         )),
+        viewport,
+    );
+}
+
+fn render_git_stashes(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
+    frame.render_widget(Clear, viewport);
+    let rows: Vec<_> = state
+        .git_stashes
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            Line::raw(format!(
+                "{} {}  {}",
+                if index == state.git_stash_selected {
+                    ">"
+                } else {
+                    " "
+                },
+                entry.reference,
+                entry.message
+            ))
+        })
+        .collect();
+    let content = if rows.is_empty() {
+        vec![Line::raw("No stashes.")]
+    } else {
+        rows
+    };
+    frame.render_widget(
+        Paragraph::new(content).block(
+            dialog_block(" Git Stashes ")
+                .title_bottom("Enter/F5 Apply  F7 Save  F8 Drop  Up/Down Select  Esc Back"),
+        ),
         viewport,
     );
 }
@@ -1140,6 +1174,8 @@ mod tests {
             git_log_detail: None,
             git_branches: Vec::new(),
             git_branch_selected: 0,
+            git_stashes: Vec::new(),
+            git_stash_selected: 0,
         }
     }
 
@@ -1332,6 +1368,8 @@ mod tests {
             git_log_detail: None,
             git_branches: Vec::new(),
             git_branch_selected: 0,
+            git_stashes: Vec::new(),
+            git_stash_selected: 0,
         };
         assert_snapshot!(rendered(&state, 80, 25));
     }

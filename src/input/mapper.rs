@@ -63,6 +63,14 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 ..
             } => Some(Action::ShowGitCommit),
             KeyChord {
+                code: KeyCode::Function(8),
+                ..
+            } => Some(Action::ShowGitStash),
+            KeyChord {
+                code: KeyCode::Function(12),
+                ..
+            } => Some(Action::GitDiscard),
+            KeyChord {
                 code: KeyCode::Function(10),
                 ..
             } => Some(Action::ShowGitLog),
@@ -74,6 +82,34 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 code: KeyCode::Enter | KeyCode::Function(3),
                 ..
             } => Some(Action::ShowGitDiff),
+            _ => None,
+        };
+    }
+    if screen == Screen::GitStash {
+        return match chord {
+            KeyChord {
+                code: KeyCode::Escape,
+                ..
+            } => Some(Action::CloseOverlay),
+            KeyChord {
+                code: KeyCode::Up, ..
+            } => Some(Action::GitStashMove(-1)),
+            KeyChord {
+                code: KeyCode::Down,
+                ..
+            } => Some(Action::GitStashMove(1)),
+            KeyChord {
+                code: KeyCode::Function(7),
+                ..
+            } => Some(Action::ShowGitStashSave),
+            KeyChord {
+                code: KeyCode::Function(8),
+                ..
+            } => Some(Action::GitStashDrop),
+            KeyChord {
+                code: KeyCode::Enter | KeyCode::Function(5),
+                ..
+            } => Some(Action::GitStashApply),
             _ => None,
         };
     }

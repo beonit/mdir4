@@ -233,6 +233,8 @@ fn resize_keeps_the_selected_entry_identity() {
         git_log_detail: None,
         git_branches: Vec::new(),
         git_branch_selected: 0,
+        git_stashes: Vec::new(),
+        git_stash_selected: 0,
     };
     let selected = state.selected_entry().unwrap().path.clone();
 

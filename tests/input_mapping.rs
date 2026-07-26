@@ -95,6 +95,22 @@ fn control_g_opens_git_status_and_escape_closes_the_plugin_view() {
     assert!(matches!(
         mapper::map_chord(
             Screen::GitStatus,
+            KeyChord::plain(KeyCode::Function(8)),
+            &registry
+        ),
+        Some(Action::ShowGitStash)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::GitStatus,
+            KeyChord::plain(KeyCode::Function(12)),
+            &registry
+        ),
+        Some(Action::GitDiscard)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::GitStatus,
             KeyChord::plain(KeyCode::Function(10)),
             &registry
         ),
@@ -107,6 +123,31 @@ fn control_g_opens_git_status_and_escape_closes_the_plugin_view() {
             &registry
         ),
         Some(Action::ShowGitDiffSearch)
+    ));
+}
+
+#[test]
+fn git_stash_screen_maps_save_apply_and_drop() {
+    let registry = CommandRegistry::default();
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::GitStash,
+            KeyChord::plain(KeyCode::Function(7)),
+            &registry
+        ),
+        Some(Action::ShowGitStashSave)
+    ));
+    assert!(matches!(
+        mapper::map_chord(Screen::GitStash, KeyChord::plain(KeyCode::Enter), &registry),
+        Some(Action::GitStashApply)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::GitStash,
+            KeyChord::plain(KeyCode::Function(8)),
+            &registry
+        ),
+        Some(Action::GitStashDrop)
     ));
 }
 

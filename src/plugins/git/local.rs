@@ -10,6 +10,8 @@ pub enum MutationKind {
     Stage,
     Unstage,
     Commit { message: String },
+    Stash { message: String },
+    Discard,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,6 +152,13 @@ impl GitMutationBackend for GitCliMutationBackend {
                 self.ensure_commit_ready()?;
                 self.run(&["commit", "-m", message])
             }
+            MutationKind::Stash { message } => self.run(&["stash", "push", "-u", "-m", message]),
+            MutationKind::Discard => {
+                let mut arguments =
+                    vec!["restore", "--source=HEAD", "--staged", "--worktree", "--"];
+                arguments.extend(targets);
+                self.run(&arguments)
+            }
         }
     }
 }
@@ -180,7 +189,7 @@ pub fn plan_targets(
     kind: MutationKind,
     targets: Vec<RepoRelativePath>,
 ) -> Result<MutationPlan, String> {
-    if targets.is_empty() {
+    if targets.is_empty() && !matches!(kind, MutationKind::Stash { .. }) {
         return Err("Select at least one repository file.".into());
     }
     Ok(MutationPlan { kind, targets })
@@ -203,12 +212,31 @@ pub fn preflight_stage(
             status,
             GitStatus::Modified | GitStatus::Added | GitStatus::Deleted | GitStatus::Renamed
         ),
-        MutationKind::Commit { .. } => false,
+        MutationKind::Commit { .. } | MutationKind::Stash { .. } | MutationKind::Discard => false,
     };
     if rows.is_empty() || rows.iter().any(|(_, status)| !allowed(*status)) {
         return Err("Selected files cannot be used by this Git operation.".into());
     }
     plan_targets(kind, rows.iter().map(|(path, _)| path.clone()).collect())
+}
+
+pub fn preflight_discard(rows: &[(RepoRelativePath, GitStatus)]) -> Result<MutationPlan, String> {
+    if rows.is_empty()
+        || rows.iter().any(|(_, status)| {
+            !matches!(
+                status,
+                GitStatus::Modified | GitStatus::Deleted | GitStatus::Renamed
+            )
+        })
+    {
+        return Err(
+            "Only tracked modifications can be discarded safely. Stash new files instead.".into(),
+        );
+    }
+    plan_targets(
+        MutationKind::Discard,
+        rows.iter().map(|(path, _)| path.clone()).collect(),
+    )
 }
 
 pub fn execute_with_lease(

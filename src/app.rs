@@ -54,6 +54,7 @@ pub enum Screen {
     GitLog,
     GitLogDetail,
     GitBranch,
+    GitStash,
 }
 
 #[derive(Debug)]
@@ -198,6 +199,12 @@ pub enum Action {
     GitStage,
     GitUnstage,
     ShowGitCommit,
+    ShowGitStash,
+    ShowGitStashSave,
+    GitStashMove(i32),
+    GitStashApply,
+    GitStashDrop,
+    GitDiscard,
     ShowGitLog,
     GitLogLoaded {
         result: Result<Vec<crate::plugins::git::history::GitLogEntry>, String>,
@@ -218,6 +225,15 @@ pub enum Action {
     },
     GitCheckout,
     GitCheckoutCompleted {
+        result: Result<(), String>,
+    },
+    GitStashesLoaded {
+        result: Result<Vec<crate::plugins::git::stash::GitStashEntry>, String>,
+    },
+    GitStashApplied {
+        result: Result<(), String>,
+    },
+    GitStashDropped {
         result: Result<(), String>,
     },
     GitMutationCompleted {
@@ -304,6 +320,15 @@ pub enum Effect {
         directory: PathBuf,
         name: String,
     },
+    LoadGitStashes(PathBuf),
+    ApplyGitStash {
+        directory: PathBuf,
+        reference: String,
+    },
+    DropGitStash {
+        directory: PathBuf,
+        reference: String,
+    },
     RunGitMutation {
         directory: PathBuf,
         plan: crate::plugins::git::local::MutationPlan,
@@ -354,6 +379,8 @@ pub struct AppState {
     pub git_log_detail: Option<ViewerState>,
     pub git_branches: Vec<crate::plugins::git::branch::GitBranch>,
     pub git_branch_selected: usize,
+    pub git_stashes: Vec<crate::plugins::git::stash::GitStashEntry>,
+    pub git_stash_selected: usize,
 }
 
 impl AppState {
@@ -401,6 +428,8 @@ impl AppState {
             git_log_detail: None,
             git_branches: Vec::new(),
             git_branch_selected: 0,
+            git_stashes: Vec::new(),
+            git_stash_selected: 0,
         }
     }
 
@@ -615,6 +644,80 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 Err(error) => state.message = Some(error),
             }
         }
+        Action::ShowGitStash => {
+            state.screen = Screen::GitStash;
+            return vec![Effect::LoadGitStashes(state.current_path.clone())];
+        }
+        Action::ShowGitStashSave => {
+            state.input_dialog = Some(InputDialog::new(
+                "Stash Git Changes",
+                "Message (optional)",
+                "",
+                InputPurpose::GitStashMessage,
+                None,
+            ));
+            state.screen = Screen::InputDialog;
+        }
+        Action::GitStashMove(delta) => {
+            if !state.git_stashes.is_empty() {
+                state.git_stash_selected = (state.git_stash_selected as i32 + delta)
+                    .clamp(0, state.git_stashes.len() as i32 - 1)
+                    as usize;
+            }
+        }
+        Action::GitStashApply => {
+            if let Some(entry) = state.git_stashes.get(state.git_stash_selected) {
+                state.message = Some("Applying stash...".into());
+                return vec![Effect::ApplyGitStash {
+                    directory: state.current_path.clone(),
+                    reference: entry.reference.clone(),
+                }];
+            }
+            state.message = Some("Select a stash to apply.".into());
+        }
+        Action::GitStashDrop => {
+            if let Some(entry) = state.git_stashes.get(state.git_stash_selected) {
+                state.confirm_dialog = Some(ConfirmDialog {
+                    title: "Drop Git Stash".into(),
+                    message: format!("Delete {}? This cannot be undone.", entry.reference),
+                    confirm_label: "Drop".into(),
+                    operation: ConfirmOperation::GitDropStash {
+                        reference: entry.reference.clone(),
+                    },
+                });
+                state.screen = Screen::ConfirmDialog;
+            } else {
+                state.message = Some("Select a stash to drop.".into());
+            }
+        }
+        Action::GitDiscard => {
+            let rows = state
+                .git_status_view
+                .as_ref()
+                .map(crate::plugins::git::status_view::GitStatusViewState::selected_or_marked_rows)
+                .unwrap_or_default();
+            let rows: Vec<_> = rows
+                .iter()
+                .map(|row| (row.path.clone(), row.status))
+                .collect();
+            match crate::plugins::git::local::preflight_discard(&rows) {
+                Ok(plan) => {
+                    state.confirm_dialog = Some(ConfirmDialog {
+                        title: "Discard Git Changes".into(),
+                        message: format!(
+                            "Discard {} tracked change(s) and restore HEAD? This cannot be undone.",
+                            plan.targets.len()
+                        ),
+                        confirm_label: "Discard".into(),
+                        operation: ConfirmOperation::GitDiscard {
+                            targets: plan.targets,
+                        },
+                    });
+                    state.screen = Screen::ConfirmDialog;
+                }
+                Err(error) => state.message = Some(error),
+            }
+        }
         Action::ShowGitCommit => {
             state.input_dialog = Some(InputDialog::new(
                 "Git Commit",
@@ -688,6 +791,31 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             });
             state.screen = Screen::GitStatus;
             return vec![Effect::LoadGitStatus(state.current_path.clone())];
+        }
+        Action::GitStashesLoaded { result } => match result {
+            Ok(stashes) => {
+                state.git_stashes = stashes;
+                state.git_stash_selected = state
+                    .git_stash_selected
+                    .min(state.git_stashes.len().saturating_sub(1));
+            }
+            Err(error) => state.message = Some(error),
+        },
+        Action::GitStashApplied { result } => {
+            state.message = Some(match result {
+                Ok(()) => "Stash applied.".into(),
+                Err(error) => format!("Apply stash failed: {error}"),
+            });
+            state.screen = Screen::GitStatus;
+            return vec![Effect::LoadGitStatus(state.current_path.clone())];
+        }
+        Action::GitStashDropped { result } => {
+            state.message = Some(match result {
+                Ok(()) => "Stash dropped.".into(),
+                Err(error) => format!("Drop stash failed: {error}"),
+            });
+            state.screen = Screen::GitStash;
+            return vec![Effect::LoadGitStashes(state.current_path.clone())];
         }
         Action::GitLogLoaded { result } => match result {
             Ok(entries) => {
@@ -1050,6 +1178,23 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                             }];
                         }
                     }
+                    InputPurpose::GitStashMessage => {
+                        state.screen = Screen::GitStash;
+                        state.message = Some("Stash in progress...".to_string());
+                        return vec![Effect::RunGitMutation {
+                            directory: state.current_path.clone(),
+                            plan: crate::plugins::git::local::MutationPlan {
+                                kind: crate::plugins::git::local::MutationKind::Stash {
+                                    message: if value.is_empty() {
+                                        "mdir4 stash".into()
+                                    } else {
+                                        value
+                                    },
+                                },
+                                targets: Vec::new(),
+                            },
+                        }];
+                    }
                     InputPurpose::GitBranchName => {
                         match crate::plugins::git::branch::validate_branch_name(&value) {
                             Ok(()) => {
@@ -1110,6 +1255,24 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                         state.editor = None;
                         state.screen = Screen::Main;
                     }
+                    ConfirmOperation::GitDiscard { targets } => {
+                        state.screen = Screen::GitStatus;
+                        state.message = Some("Discard in progress...".to_string());
+                        return vec![Effect::RunGitMutation {
+                            directory: state.current_path.clone(),
+                            plan: crate::plugins::git::local::MutationPlan {
+                                kind: crate::plugins::git::local::MutationKind::Discard,
+                                targets,
+                            },
+                        }];
+                    }
+                    ConfirmOperation::GitDropStash { reference } => {
+                        state.screen = Screen::GitStash;
+                        return vec![Effect::DropGitStash {
+                            directory: state.current_path.clone(),
+                            reference,
+                        }];
+                    }
                     ConfirmOperation::OverwriteSave { path } => {
                         if let Some((_, editor)) = &state.editor {
                             state.screen = Screen::Progress;
@@ -1141,6 +1304,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 .input_dialog
                 .as_ref()
                 .is_some_and(|dialog| dialog.purpose == InputPurpose::GitCommitMessage);
+            let git_stash_dialog = state
+                .input_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.purpose == InputPurpose::GitStashMessage);
             let git_branch_dialog = state
                 .input_dialog
                 .as_ref()
@@ -1155,6 +1322,8 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 Screen::GitDiff
             } else if git_commit_dialog {
                 Screen::GitStatus
+            } else if git_stash_dialog {
+                Screen::GitStash
             } else if git_branch_dialog {
                 Screen::GitBranch
             } else if state.editor.is_some() {
@@ -1773,6 +1942,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 state.git_branches.clear();
                 state.screen = Screen::GitStatus;
                 return Vec::new();
+            } else if state.screen == Screen::GitStash {
+                state.git_stashes.clear();
+                state.screen = Screen::GitStatus;
+                return Vec::new();
             } else if state.screen == Screen::GitDiff {
                 state.git_diff = None;
                 state.screen = Screen::GitStatus;
@@ -1921,6 +2094,8 @@ mod tests {
             git_log_detail: None,
             git_branches: Vec::new(),
             git_branch_selected: 0,
+            git_stashes: Vec::new(),
+            git_stash_selected: 0,
         }
     }
 

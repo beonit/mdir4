@@ -12,6 +12,7 @@ pub enum InputPurpose {
     SearchViewer,
     SearchGitDiff,
     GitCommitMessage,
+    GitStashMessage,
     GitBranchName,
     SearchEditor,
     QcdLabel,
@@ -113,6 +114,12 @@ pub enum ConfirmOperation {
         path: PathBuf,
     },
     DiscardEditor,
+    GitDiscard {
+        targets: Vec<crate::plugins::git::model::RepoRelativePath>,
+    },
+    GitDropStash {
+        reference: String,
+    },
 }
 
 fn grapheme_count(text: &str) -> usize {

@@ -103,6 +103,8 @@ fn ten_thousand_entry_navigation_and_render_smoke() {
         git_log_detail: None,
         git_branches: Vec::new(),
         git_branch_selected: 0,
+        git_stashes: Vec::new(),
+        git_stash_selected: 0,
     };
     let started = Instant::now();
     app::reduce(&mut state, Action::End);
