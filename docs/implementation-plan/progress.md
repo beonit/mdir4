@@ -232,6 +232,21 @@
 - [ ] R1-02 고정 RC Linux/macOS 실제 환경 수동 시험
 - [ ] R1-03 v1.0 최종 게이트
 
+## M4 이후 검토 backlog
+
+아래 항목은 현재 M1~R1 완료 조건에 포함하지 않으며, M4까지의 기능이 끝난 뒤 별도
+요구사항 검토와 acceptance card를 만든 다음 구현한다.
+
+- [ ] M4+ UI-01 MCD 스크롤/뷰포트 보정
+  - 긴 트리에서 선택 항목과 스크롤 위치가 안정적으로 따라오는지 재현·검토한다.
+  - visible window, 페이지 이동, 검색/재검색 후 cursor 유지, 비동기 child load 중 viewport 보존을 다룬다.
+- [ ] M4+ EDIT-01 외부 `$EDITOR` 연결 화면
+  - `$EDITOR`와 `$VISUAL` fallback, 인자 전달, child process 대기, alternate screen/raw mode 복구,
+    취소·비정상 종료·저장 후 reload를 Linux/macOS 기준으로 정의한다.
+- [ ] M4+ RENAME-01 이름 중간 커서 편집
+  - Left/Right/Home/End와 grapheme 단위 Unicode 커서, 삽입·삭제, 확장자 정책, validation 오류 위치를
+    편집 버퍼 snapshot으로 먼저 확정한다.
+
 ## v1 이후 Git built-in
 
 상세 카드는 [`../plugins/git/03-task-cards.md`](../plugins/git/03-task-cards.md), 수용 기준은
