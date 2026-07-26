@@ -226,6 +226,7 @@ fn resize_keeps_the_selected_entry_identity() {
         plugin_status: Vec::new(),
         plugin_commands: Vec::new(),
         plugin_decorations: std::collections::BTreeMap::new(),
+        git_status_view: None,
     };
     let selected = state.selected_entry().unwrap().path.clone();
 

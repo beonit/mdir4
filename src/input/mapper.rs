@@ -10,6 +10,15 @@ pub fn map_key(screen: Screen, event: KeyEvent, registry: &CommandRegistry) -> O
 }
 
 pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) -> Option<Action> {
+    if screen == Screen::GitStatus {
+        return match chord {
+            KeyChord {
+                code: KeyCode::Escape,
+                ..
+            } => Some(Action::CloseOverlay),
+            _ => None,
+        };
+    }
     if screen == Screen::Help {
         return match chord {
             KeyChord {

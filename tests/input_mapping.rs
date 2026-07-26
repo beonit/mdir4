@@ -33,6 +33,32 @@ fn release_is_ignored_and_repeat_uses_the_same_mapping_as_press() {
 }
 
 #[test]
+fn alt_g_opens_git_status_and_escape_closes_the_plugin_view() {
+    let registry = CommandRegistry::default();
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Main,
+            KeyChord {
+                code: KeyCode::Character('g'),
+                control: false,
+                alt: true,
+                shift: false
+            },
+            &registry
+        ),
+        Some(Action::ShowGitStatus)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::GitStatus,
+            KeyChord::plain(KeyCode::Escape),
+            &registry
+        ),
+        Some(Action::CloseOverlay)
+    ));
+}
+
+#[test]
 fn custom_keymap_updates_display_and_mapping_with_item_fallback() {
     let overrides = BTreeMap::from([
         ("refresh".to_string(), "Ctrl+L".to_string()),

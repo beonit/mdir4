@@ -49,6 +49,7 @@ pub enum Screen {
     Qcd,
     Menu,
     Settings,
+    GitStatus,
 }
 
 #[derive(Debug)]
@@ -180,6 +181,10 @@ pub enum Action {
     MenuCategory(i32),
     MenuOpen,
     ShowSettings,
+    ShowGitStatus,
+    GitStatusLoaded {
+        result: Result<Vec<crate::plugins::git::model::GitStatusRow>, String>,
+    },
     SettingsMove(i32),
     SettingsChange(i32),
     ApplySettings,
@@ -228,6 +233,7 @@ pub enum Effect {
         path: PathBuf,
         config: crate::config::Config,
     },
+    LoadGitStatus(PathBuf),
 }
 
 #[derive(Debug)]
@@ -267,6 +273,7 @@ pub struct AppState {
     pub plugin_status: Vec<crate::plugins::api::StyledText>,
     pub plugin_commands: Vec<command_registry::PluginCommandHint>,
     pub plugin_decorations: BTreeMap<String, crate::plugins::api::FileDecoration>,
+    pub git_status_view: Option<crate::plugins::git::status_view::GitStatusViewState>,
 }
 
 impl AppState {
@@ -307,6 +314,7 @@ impl AppState {
             plugin_status: Vec::new(),
             plugin_commands: Vec::new(),
             plugin_decorations: BTreeMap::new(),
+            git_status_view: None,
         }
     }
 
@@ -449,6 +457,15 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             return vec![Effect::LoadDirectory(state.current_path.clone())];
         }
         Action::ShowHelp => state.screen = Screen::Help,
+        Action::ShowGitStatus => {
+            state.git_status_view.get_or_insert_default();
+            state.screen = Screen::GitStatus;
+            return vec![Effect::LoadGitStatus(state.current_path.clone())];
+        }
+        Action::GitStatusLoaded { result } => match result {
+            Ok(rows) => state.git_status_view.get_or_insert_default().refresh(rows),
+            Err(message) => state.message = Some(message),
+        },
         Action::ShowRename => {
             if let Some(entry) = state.selected_entry().filter(|entry| entry.is_markable()) {
                 state.input_dialog = Some(InputDialog::new(
@@ -1483,6 +1500,7 @@ mod tests {
             plugin_status: Vec::new(),
             plugin_commands: Vec::new(),
             plugin_decorations: BTreeMap::new(),
+            git_status_view: None,
         }
     }
 
@@ -1497,6 +1515,25 @@ mod tests {
         assert_eq!(app.marked.len(), 2);
         reduce(&mut app, Action::SelectAll);
         assert_eq!(app.marked.len(), 2);
+    }
+
+    #[test]
+    fn git_status_opens_and_refreshes_the_plugin_owned_rows() {
+        let mut app = state();
+        let effects = reduce(&mut app, Action::ShowGitStatus);
+        assert!(matches!(effects.as_slice(), [Effect::LoadGitStatus(_)]));
+        reduce(
+            &mut app,
+            Action::GitStatusLoaded {
+                result: Ok(vec![crate::plugins::git::model::GitStatusRow {
+                    path: crate::plugins::git::model::RepoRelativePath::new("changed.txt").unwrap(),
+                    status: crate::plugins::git::model::GitStatus::Modified,
+                    old_path: None,
+                }]),
+            },
+        );
+        assert_eq!(app.screen, Screen::GitStatus);
+        assert_eq!(app.git_status_view.as_ref().unwrap().rows.len(), 1);
     }
 
     #[test]

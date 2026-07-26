@@ -49,6 +49,7 @@ pub enum CommandId {
     OpenDrivePicker,
     ToggleView,
     Settings,
+    GitStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +180,18 @@ impl Default for CommandRegistry {
                     shift: false,
                 },
                 "Settings",
+                None,
+                true,
+            ),
+            command(
+                Id::GitStatus,
+                KeyChord {
+                    code: Key::Character('g'),
+                    control: false,
+                    alt: true,
+                    shift: false,
+                },
+                "Git Status",
                 None,
                 true,
             ),
@@ -443,6 +456,7 @@ fn command_id(name: &str) -> Option<CommandId> {
             "menu" => Menu,
             "toggleview" => ToggleView,
             "settings" => Settings,
+            "gitstatus" => GitStatus,
             _ => return None,
         },
     )
@@ -516,6 +530,7 @@ fn action(id: CommandId) -> Action {
         CommandId::Menu => Action::ShowMenu,
         CommandId::ToggleView => Action::ToggleView,
         CommandId::Settings => Action::ShowSettings,
+        CommandId::GitStatus => Action::ShowGitStatus,
         _ => Action::ClearMessage,
     }
 }

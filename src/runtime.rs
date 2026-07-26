@@ -19,6 +19,7 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use thiserror::Error;
 
+use crate::plugins::git::{model::GitReadBackend, real_backend::GitCliReadBackend};
 use crate::{
     adapters::{
         real_fs::RealFileSystem, system_disk::SystemDiskInfo, system_launcher::SystemFileLauncher,
@@ -406,6 +407,17 @@ impl EffectWorker {
                                 .collect()
                         });
                         Action::McdLoaded { node, result }
+                    }
+                    Effect::LoadGitStatus(path) => {
+                        let backend = GitCliReadBackend;
+                        let result =
+                            backend
+                                .discover(&path)
+                                .and_then(|repository| match repository {
+                                    Some(repository) => backend.status(&repository),
+                                    None => Ok(Vec::new()),
+                                });
+                        Action::GitStatusLoaded { result }
                     }
                     Effect::SaveConfig { path, config } => {
                         let result = crate::config::save_atomic(&path, &config)
@@ -965,6 +977,7 @@ mod tests {
             plugin_status: Vec::new(),
             plugin_commands: Vec::new(),
             plugin_decorations: std::collections::BTreeMap::new(),
+            git_status_view: None,
         }
     }
 

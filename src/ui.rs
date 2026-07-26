@@ -48,8 +48,33 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         Screen::Qcd => render_qcd(frame, state, metrics.viewport),
         Screen::Menu => render_menu(frame, state, metrics.viewport),
         Screen::Settings => render_settings(frame, state, metrics.viewport),
+        Screen::GitStatus => render_git_status(frame, state, metrics.viewport),
         Screen::Main => {}
     }
+}
+
+fn render_git_status(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
+    frame.render_widget(Clear, viewport);
+    let Some(view) = &state.git_status_view else {
+        return;
+    };
+    let rows: Vec<_> = view
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            Line::raw(format!(
+                "{} {} {}",
+                if index == view.selected { ">" } else { " " },
+                crate::plugins::git::decoration::prefix(row.status),
+                row.path.as_path().display()
+            ))
+        })
+        .collect();
+    frame.render_widget(
+        Paragraph::new(rows).block(dialog_block(" Git Status ")),
+        viewport,
+    );
 }
 
 fn render_menu(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
@@ -996,6 +1021,7 @@ mod tests {
             plugin_status: Vec::new(),
             plugin_commands: Vec::new(),
             plugin_decorations: std::collections::BTreeMap::new(),
+            git_status_view: None,
         }
     }
 
@@ -1042,6 +1068,25 @@ mod tests {
         let rendered = format_entry_with_decoration(&entry, 12, Some(&decoration));
         assert_eq!(&rendered[..2], "!!");
         assert_eq!(crate::layout::text::cell_width(&rendered), 12);
+    }
+
+    #[test]
+    fn git_status_renders_as_a_full_screen_plugin_owned_view() {
+        let mut state = state_with(Vec::new(), 80, 25);
+        state.screen = Screen::GitStatus;
+        state.git_status_view = Some(crate::plugins::git::status_view::GitStatusViewState {
+            rows: vec![crate::plugins::git::model::GitStatusRow {
+                path: crate::plugins::git::model::RepoRelativePath::new("changed.txt").unwrap(),
+                status: crate::plugins::git::model::GitStatus::Modified,
+                old_path: None,
+            }],
+            selected: 0,
+            marked: std::collections::BTreeSet::new(),
+        });
+        let output = rendered(&state, 80, 25);
+        assert!(output.contains("Git Status"));
+        assert!(output.contains("M  changed.txt"));
+        assert!(!output.contains("Enter Open"));
     }
 
     fn entry(name: &str, kind: EntryKind, size: u64) -> FileEntry {
@@ -1162,6 +1207,7 @@ mod tests {
             plugin_status: Vec::new(),
             plugin_commands: Vec::new(),
             plugin_decorations: std::collections::BTreeMap::new(),
+            git_status_view: None,
         };
         assert_snapshot!(rendered(&state, 80, 25));
     }

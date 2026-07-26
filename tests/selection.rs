@@ -61,6 +61,7 @@ fn state() -> AppState {
         plugin_status: Vec::new(),
         plugin_commands: Vec::new(),
         plugin_decorations: std::collections::BTreeMap::new(),
+        git_status_view: None,
     }
 }
 
