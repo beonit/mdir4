@@ -1,0 +1,16 @@
+version: 1
+terminal: { width: 80, height: 25 }
+start_path: /work
+filesystem:
+  - { path: /work, kind: directory }
+  - { path: /work/docs, kind: directory }
+  - { path: /work/docs/note.txt, kind: file, size: 7 }
+clock: "2026-07-25T12:00:00Z"
+disk: { free_bytes: 8192 }
+steps:
+  - { action: start }
+  - { action: key, key: down }
+  - { action: key, key: enter }
+  - { action: snapshot, name: navigation }
+assertions: { path: /work/docs, selected: 0, marked: 0, free_bytes: 8192 }
+snapshots: [navigation]

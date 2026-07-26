@@ -1,0 +1,29 @@
+---
+source: tests/scenarios.rs
+expression: snapshot
+---
+/work                                                                           
+..                                                              <UP> ----- --:--
+docs                                                           <DIR> ----- --:--
+readme.txt                                                      1.0K ----- --:--
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+..   UP   0B   ----                                                             
+Files 1  Dirs 1  Selected 0 / 0B  Free 4.0K  Items 2                            
+Enter Open  Backspace Parent  Space Mark  R Refresh  Ctrl+Q Quit                
+1Help 2Ren 3View 4Edit 5Copy 6Move 7Dir 8Del 9--- 10MCD 11QCD 12Menu

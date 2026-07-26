@@ -1,0 +1,16 @@
+version: 1
+terminal: { width: 80, height: 25 }
+start_path: /work
+filesystem:
+  - { path: /work, kind: directory }
+  - { path: /work/a.txt, kind: file, size: 1 }
+  - { path: /work/b.txt, kind: file, size: 2 }
+clock: "2026-07-25T12:00:00Z"
+disk: { free_bytes: 16384 }
+steps:
+  - { action: start }
+  - { action: key, key: end }
+  - { action: resize, width: 120, height: 40 }
+  - { action: snapshot, name: resize }
+assertions: { path: /work, selected: 2, marked: 0, free_bytes: 16384 }
+snapshots: [resize]

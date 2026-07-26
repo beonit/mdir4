@@ -1,0 +1,21 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ThemeRole {
+    MainBackground,
+    ColumnSeparator,
+    PathBar,
+    StatusBar,
+    MessageBar,
+    FunctionBar,
+    Dialog,
+    DialogBorder,
+    Warning,
+    McdBackground,
+    EntryDirectory,
+    EntryFile,
+    EntryExecutable,
+    EntryArchive,
+    EntryOther,
+    EntryCursor,
+    EntryMarked,
+    EntryCursorMarked,
+}

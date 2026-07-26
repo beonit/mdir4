@@ -1,0 +1,14 @@
+version: 1
+terminal: { width: 80, height: 25 }
+start_path: /work
+filesystem:
+  - { path: /work, kind: directory }
+  - { path: /work/docs, kind: directory }
+  - { path: /work/readme.txt, kind: file, size: 1024 }
+clock: "2026-07-25T12:00:00Z"
+disk: { free_bytes: 4096 }
+steps:
+  - { action: start }
+  - { action: snapshot, name: startup }
+assertions: { path: /work, selected: 0, marked: 0, free_bytes: 4096 }
+snapshots: [startup]

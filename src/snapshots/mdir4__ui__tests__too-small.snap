@@ -1,0 +1,5 @@
+---
+source: src/ui.rs
+expression: "rendered(&small, 59, 14)"
+---
+            Terminal too small (minimum 60x15)

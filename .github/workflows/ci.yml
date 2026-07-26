@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: Quality (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all-targets --all-features --locked
+
+      - name: Reject unreviewed snapshots
+        shell: bash
+        run: |
+          snapshots="$(find . -path ./target -prune -o -name '*.snap.new' -print)"
+          if [[ -n "$snapshots" ]]; then
+            echo "Unreviewed Insta snapshots found:"
+            echo "$snapshots"
+            exit 1
+          fi
+
+  release-candidate:
+    name: Windows release candidate
+    runs-on: windows-latest
+    needs: quality
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build locked release binary
+        run: cargo build --release --locked
+
+      - name: Package release candidate
+        run: >-
+          python scripts/package_release.py
+          --binary target/release/mdir4.exe
+          --target windows-x86_64
+
+      - name: Verify package contains no workspace path
+        shell: pwsh
+        run: |
+          $workspace = [Regex]::Escape($env:GITHUB_WORKSPACE)
+          Expand-Archive dist/mdir4-v0.1.0-windows-x86_64.zip -DestinationPath package-check
+          Get-ChildItem package-check -Recurse -File | ForEach-Object {
+            if (-not $_.Name.EndsWith('.exe')) {
+              $content = Get-Content $_.FullName -Raw
+              if ($content -match $workspace) {
+                throw "Workspace path leaked into $($_.FullName)"
+              }
+            }
+          }
+
+      - name: Upload immutable candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: mdir4-v0.1.0-windows-x86_64
+          path: |
+            dist/mdir4-v0.1.0-windows-x86_64.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30

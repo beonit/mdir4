@@ -1,0 +1,1466 @@
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
+
+pub mod command_registry;
+
+#[derive(Debug, Clone)]
+pub struct SettingsDraft {
+    pub long_view: bool,
+    pub show_hidden: bool,
+    pub theme: String,
+    pub column_count: Option<u8>,
+    pub column_width: Option<u16>,
+    pub sort_key: SortKey,
+    pub sort_direction: SortDirection,
+    pub use_custom_keymap: bool,
+}
+
+use crate::{
+    fs::{EntryId, EntryKind, FileEntry},
+    layout::{self, Direction, LayoutSettings, PageDirection, Viewport},
+    model::{
+        dialog::{ConfirmDialog, ConfirmOperation, InputDialog, InputPurpose},
+        directory::{DirectoryListing, SortDirection, SortKey, sort_entries},
+        editor::EditorBuffer,
+        operation::OperationSummary,
+        selection,
+        viewer::ViewerState,
+    },
+    operations::planner::validate_name,
+    ports::filesystem::FsError,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Screen {
+    #[default]
+    Main,
+    Help,
+    QuitConfirm,
+    InputDialog,
+    ConfirmDialog,
+    Viewer,
+    Editor,
+    Progress,
+    DrivePicker,
+    ConflictDialog,
+    Mcd,
+    Qcd,
+    Menu,
+    Settings,
+}
+
+#[derive(Debug)]
+pub enum Action {
+    Started,
+    Resize(Viewport),
+    DirectoryLoaded {
+        path: PathBuf,
+        result: Result<DirectoryListing, FsError>,
+    },
+    DiskInfoLoaded(Result<u64, String>),
+    FileLaunched {
+        path: PathBuf,
+        result: Result<(), String>,
+    },
+    Tick,
+    Move(Direction),
+    Page(PageDirection),
+    Home,
+    End,
+    ToggleMark,
+    ToggleMarkAndAdvance,
+    SelectAll,
+    Open,
+    GoParent,
+    Reload,
+    ShowHelp,
+    CloseOverlay,
+    ClearMessage,
+    RequestQuit,
+    ConfirmQuit,
+    ShowRename,
+    ShowMakeDirectory,
+    ShowCopy,
+    ShowMove,
+    ShowDelete {
+        permanent: bool,
+    },
+    ShowViewer,
+    ShowEditor,
+    DialogCharacter(char),
+    DialogBackspace,
+    ConfirmDialog,
+    CancelDialog,
+    ViewerLoaded {
+        path: PathBuf,
+        result: Result<Vec<u8>, FsError>,
+    },
+    ViewerLine(i32),
+    ViewerPage(i32),
+    ShowViewerSearch,
+    ViewerNextMatch {
+        backwards: bool,
+    },
+    EditorLoaded {
+        path: PathBuf,
+        modified: Option<std::time::SystemTime>,
+        result: Result<Vec<u8>, FsError>,
+    },
+    EditorCharacter(char),
+    EditorBackspace,
+    EditorMoveHorizontal(i32),
+    EditorMoveVertical(i32),
+    EditorMoveLineBoundary(bool),
+    EditorUndo,
+    EditorRedo,
+    ShowEditorSearch,
+    SaveEditor,
+    SaveEditorAs,
+    FileOperationCompleted {
+        message: String,
+        result: Result<OperationSummary, FsError>,
+    },
+    OperationProgress(OperationSummary),
+    FileSaved {
+        path: PathBuf,
+        result: Result<(), FsError>,
+        modified: Option<std::time::SystemTime>,
+    },
+    SortKeyNext,
+    SortDirectionToggle,
+    ToggleHidden,
+    OpenDrivePicker,
+    DrivesLoaded(Result<Vec<PathBuf>, String>),
+    DriveMove(i32),
+    OpenSelectedDrive,
+    CancelOperation,
+    ConflictRequested {
+        source: PathBuf,
+        target: PathBuf,
+    },
+    ResolveConflict(crate::model::operation::ConflictDecision),
+    ToggleView,
+    ShowMcd,
+    McdLoaded {
+        node: crate::mcd::tree::NodeId,
+        result: Result<Vec<PathBuf>, FsError>,
+    },
+    McdMove(i32),
+    McdCollapse,
+    McdExpand,
+    McdOpen,
+    McdRescan,
+    ShowMcdSearch,
+    ShowQcd,
+    QcdMove(i32),
+    QcdOpen,
+    QcdAddCurrent,
+    QcdDelete,
+    QcdEdit,
+    QcdDigit(usize),
+    QcdReorder(i32),
+    ShowMenu,
+    MenuMove(i32),
+    MenuCategory(i32),
+    MenuOpen,
+    ShowSettings,
+    SettingsMove(i32),
+    SettingsChange(i32),
+    ApplySettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Effect {
+    LoadDirectory(PathBuf),
+    LoadDiskInfo(PathBuf),
+    LaunchFile(PathBuf),
+    Rename {
+        from: PathBuf,
+        to: PathBuf,
+    },
+    CreateDirectory(PathBuf),
+    LoadViewer(PathBuf),
+    LoadEditor(PathBuf),
+    SaveFile {
+        path: PathBuf,
+        contents: Vec<u8>,
+        expected_modified: Option<std::time::SystemTime>,
+        allow_overwrite: bool,
+    },
+    Copy {
+        sources: Vec<PathBuf>,
+        target: PathBuf,
+    },
+    Move {
+        sources: Vec<PathBuf>,
+        target: PathBuf,
+    },
+    Delete {
+        targets: Vec<PathBuf>,
+        permanent: bool,
+        current_directory: PathBuf,
+    },
+    LoadDrives,
+    CancelOperation,
+    ResolveConflict(crate::model::operation::ConflictDecision),
+    LoadMcdChildren {
+        node: crate::mcd::tree::NodeId,
+        path: PathBuf,
+    },
+    SaveConfig {
+        path: PathBuf,
+        config: crate::config::Config,
+    },
+}
+
+#[derive(Debug)]
+pub struct AppState {
+    pub current_path: PathBuf,
+    pub entries: Vec<FileEntry>,
+    pub selected: usize,
+    pub marked: HashSet<EntryId>,
+    pub viewport: Viewport,
+    pub layout_settings: LayoutSettings,
+    pub screen: Screen,
+    pub message: Option<String>,
+    pub free_space: Option<u64>,
+    pub should_quit: bool,
+    pub input_dialog: Option<InputDialog>,
+    pub confirm_dialog: Option<ConfirmDialog>,
+    pub viewer: Option<(PathBuf, ViewerState)>,
+    pub editor: Option<(PathBuf, EditorBuffer)>,
+    pub sort_key: SortKey,
+    pub sort_direction: SortDirection,
+    pub show_hidden: bool,
+    pub drives: Vec<PathBuf>,
+    pub selected_drive: usize,
+    pub conflict: Option<(PathBuf, PathBuf)>,
+    pub long_view: bool,
+    pub theme: crate::theme::catalog::Theme,
+    pub mcd: Option<crate::mcd::tree::DirectoryTree>,
+    pub qcd: Vec<crate::config::schema::QcdEntry>,
+    pub selected_qcd: usize,
+    pub menu_category: usize,
+    pub menu_item: usize,
+    pub settings_cursor: usize,
+    pub settings_preview: Option<SettingsDraft>,
+    pub config_path: Option<PathBuf>,
+    pub persisted_config: crate::config::Config,
+    pub registry: command_registry::CommandRegistry,
+}
+
+impl AppState {
+    pub fn new(start_path: PathBuf, viewport: Viewport) -> Self {
+        Self {
+            current_path: start_path,
+            entries: Vec::new(),
+            selected: 0,
+            marked: HashSet::new(),
+            viewport,
+            layout_settings: LayoutSettings::default(),
+            screen: Screen::Main,
+            message: Some("Loading directory...".to_string()),
+            free_space: None,
+            should_quit: false,
+            input_dialog: None,
+            confirm_dialog: None,
+            viewer: None,
+            editor: None,
+            sort_key: SortKey::Name,
+            sort_direction: SortDirection::Ascending,
+            show_hidden: true,
+            drives: Vec::new(),
+            selected_drive: 0,
+            conflict: None,
+            long_view: false,
+            theme: crate::theme::catalog::Theme::classic(),
+            mcd: None,
+            qcd: Vec::new(),
+            selected_qcd: 0,
+            menu_category: 0,
+            menu_item: 0,
+            settings_cursor: 0,
+            settings_preview: None,
+            config_path: None,
+            persisted_config: crate::config::Config::default(),
+            registry: command_registry::CommandRegistry::default(),
+        }
+    }
+
+    pub fn selected_entry(&self) -> Option<&FileEntry> {
+        self.entries.get(self.selected)
+    }
+
+    pub fn marked_summary(&self) -> (usize, u64) {
+        let summary = selection::summary(&self.entries, &self.marked);
+        (summary.count, summary.known_file_bytes)
+    }
+
+    pub fn operation_targets(&self) -> Vec<EntryId> {
+        selection::operation_targets(&self.entries, self.selected, &self.marked)
+    }
+
+    pub fn file_and_directory_count(&self) -> (usize, usize) {
+        self.entries
+            .iter()
+            .fold((0, 0), |(files, dirs), entry| match entry.kind {
+                EntryKind::Directory => (files, dirs + 1),
+                EntryKind::File | EntryKind::Other => (files + 1, dirs),
+                EntryKind::Parent => (files, dirs),
+            })
+    }
+}
+
+pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
+    match action {
+        Action::Started => {
+            state.message = Some("Loading directory...".to_string());
+            return vec![Effect::LoadDirectory(state.current_path.clone())];
+        }
+        Action::Resize(viewport) => state.viewport = viewport,
+        Action::DirectoryLoaded { path, result } => match result {
+            Ok(listing) => {
+                let is_empty = listing.is_empty();
+                let same_directory = state.current_path == path;
+                let selected_path = same_directory
+                    .then(|| state.selected_entry().map(|entry| entry.path.clone()))
+                    .flatten();
+                state.current_path = path;
+                state.entries = listing.entries;
+                if !state.show_hidden {
+                    state.entries.retain(|entry| {
+                        entry.kind == EntryKind::Parent || !entry.attributes.hidden
+                    });
+                }
+                sort_entries(&mut state.entries, state.sort_key, state.sort_direction);
+                if same_directory {
+                    selection::retain_existing(&mut state.marked, &state.entries);
+                    state.selected = selected_path
+                        .and_then(|path| state.entries.iter().position(|entry| entry.path == path))
+                        .unwrap_or_else(|| {
+                            state.selected.min(state.entries.len().saturating_sub(1))
+                        });
+                } else {
+                    state.selected = 0;
+                    state.marked.clear();
+                }
+                state.message = if is_empty {
+                    Some("Empty directory".to_string())
+                } else {
+                    None
+                };
+                return vec![Effect::LoadDiskInfo(state.current_path.clone())];
+            }
+            Err(error) => {
+                state.message = Some(format!("Could not open directory: {error}"));
+            }
+        },
+        Action::DiskInfoLoaded(result) => match result {
+            Ok(bytes) => state.free_space = Some(bytes),
+            Err(error) => state.message = Some(format!("Disk information unavailable: {error}")),
+        },
+        Action::FileLaunched { path, result } => {
+            state.message = Some(match result {
+                Ok(()) => format!("Opened {}", path.display()),
+                Err(error) => error,
+            });
+        }
+        Action::Tick => {}
+        Action::Move(direction) => {
+            let metrics = layout::calculate_for_entries(
+                state.viewport,
+                state.layout_settings,
+                state.entries.len(),
+            );
+            state.selected =
+                layout::move_cursor(state.selected, state.entries.len(), direction, &metrics);
+        }
+        Action::Page(direction) => {
+            let metrics = layout::calculate_for_entries(
+                state.viewport,
+                state.layout_settings,
+                state.entries.len(),
+            );
+            state.selected =
+                layout::move_page(state.selected, state.entries.len(), direction, &metrics);
+        }
+        Action::Home => state.selected = 0,
+        Action::End => state.selected = state.entries.len().saturating_sub(1),
+        Action::ToggleMark => toggle_current_mark(state),
+        Action::ToggleMarkAndAdvance => {
+            toggle_current_mark(state);
+            let metrics = layout::calculate_for_entries(
+                state.viewport,
+                state.layout_settings,
+                state.entries.len(),
+            );
+            state.selected = layout::move_cursor(
+                state.selected,
+                state.entries.len(),
+                Direction::Down,
+                &metrics,
+            );
+        }
+        Action::SelectAll => {
+            selection::select_all(&mut state.marked, &state.entries);
+        }
+        Action::Open => {
+            if let Some(entry) = state.selected_entry().cloned() {
+                if entry.is_directory() {
+                    state.message = Some("Loading directory...".to_string());
+                    return vec![Effect::LoadDirectory(entry.path)];
+                }
+                state.message = Some(format!("Opening {}...", entry.display_name()));
+                return vec![Effect::LaunchFile(entry.path)];
+            }
+        }
+        Action::GoParent => {
+            if let Some(parent) = parent_of(&state.current_path) {
+                state.message = Some("Loading parent directory...".to_string());
+                return vec![Effect::LoadDirectory(parent)];
+            }
+        }
+        Action::Reload => {
+            state.message = Some("Refreshing...".to_string());
+            return vec![Effect::LoadDirectory(state.current_path.clone())];
+        }
+        Action::ShowHelp => state.screen = Screen::Help,
+        Action::ShowRename => {
+            if let Some(entry) = state.selected_entry().filter(|entry| entry.is_markable()) {
+                state.input_dialog = Some(InputDialog::new(
+                    "Rename",
+                    "New name",
+                    entry.display_name(),
+                    InputPurpose::Rename,
+                    Some(entry.path.clone()),
+                ));
+                state.screen = Screen::InputDialog;
+            }
+        }
+        Action::ShowMakeDirectory => {
+            state.input_dialog = Some(InputDialog::new(
+                "Make Directory",
+                "Directory name",
+                "",
+                InputPurpose::MakeDirectory,
+                None,
+            ));
+            state.screen = Screen::InputDialog;
+        }
+        action @ (Action::ShowCopy | Action::ShowMove) => {
+            let purpose = if matches!(action, Action::ShowCopy) {
+                InputPurpose::Copy
+            } else {
+                InputPurpose::Move
+            };
+            if !state.operation_targets().is_empty() {
+                state.input_dialog = Some(InputDialog::new(
+                    if purpose == InputPurpose::Copy {
+                        "Copy"
+                    } else {
+                        "Move"
+                    },
+                    "Destination directory",
+                    state.current_path.to_string_lossy(),
+                    purpose,
+                    None,
+                ));
+                state.screen = Screen::InputDialog;
+            }
+        }
+        Action::ShowDelete { permanent } => {
+            let targets = state.operation_targets();
+            if !targets.is_empty() {
+                let bytes: u64 = state
+                    .entries
+                    .iter()
+                    .filter(|entry| targets.contains(&entry.path) && entry.kind == EntryKind::File)
+                    .map(|entry| entry.size)
+                    .sum();
+                state.confirm_dialog = Some(ConfirmDialog {
+                    title: if permanent {
+                        "Permanent Delete"
+                    } else {
+                        "Move to Trash"
+                    }
+                    .to_string(),
+                    message: format!(
+                        "{} item(s), {} byte(s) will be {}.",
+                        targets.len(),
+                        bytes,
+                        if permanent {
+                            "permanently deleted"
+                        } else {
+                            "moved to Trash"
+                        }
+                    ),
+                    confirm_label: if permanent {
+                        "Delete Permanently"
+                    } else {
+                        "Move to Trash"
+                    }
+                    .to_string(),
+                    operation: ConfirmOperation::Delete { targets, permanent },
+                });
+                state.screen = Screen::ConfirmDialog;
+            }
+        }
+        Action::ShowViewer => {
+            if let Some(entry) = state
+                .selected_entry()
+                .filter(|entry| entry.kind == EntryKind::File)
+            {
+                let path = entry.path.clone();
+                state.viewer = Some((path.clone(), ViewerState::Loading { generation: 1 }));
+                state.screen = Screen::Viewer;
+                return vec![Effect::LoadViewer(path)];
+            }
+        }
+        Action::ShowEditor => {
+            if let Some(entry) = state
+                .selected_entry()
+                .filter(|entry| entry.kind == EntryKind::File)
+            {
+                let path = entry.path.clone();
+                let name = entry.display_name();
+                state.screen = Screen::Editor;
+                state.message = Some(format!("Loading {name}..."));
+                return vec![Effect::LoadEditor(path)];
+            }
+        }
+        Action::DialogCharacter(character) => {
+            if let Some(dialog) = &mut state.input_dialog {
+                dialog.insert(character);
+            }
+        }
+        Action::DialogBackspace => {
+            if let Some(dialog) = &mut state.input_dialog {
+                dialog.backspace();
+            }
+        }
+        Action::ConfirmDialog => {
+            if let Some(dialog) = state.input_dialog.take() {
+                let value = dialog.value.trim().to_string();
+                let effect = match dialog.purpose {
+                    InputPurpose::Rename => match validate_name(&value) {
+                        Ok(()) => dialog.source.map(|from| Effect::Rename {
+                            to: state.current_path.join(value),
+                            from,
+                        }),
+                        Err(error) => {
+                            let mut dialog = dialog;
+                            dialog.error = Some(error.to_string());
+                            state.input_dialog = Some(dialog);
+                            None
+                        }
+                    },
+                    InputPurpose::MakeDirectory => match validate_name(&value) {
+                        Ok(()) => Some(Effect::CreateDirectory(state.current_path.join(value))),
+                        Err(error) => {
+                            let mut dialog = dialog;
+                            dialog.error = Some(error.to_string());
+                            state.input_dialog = Some(dialog);
+                            None
+                        }
+                    },
+                    InputPurpose::Copy | InputPurpose::Move => {
+                        if value.is_empty() {
+                            let mut dialog = dialog;
+                            dialog.error = Some("Destination must not be empty.".to_string());
+                            state.input_dialog = Some(dialog);
+                            None
+                        } else {
+                            let target = PathBuf::from(value);
+                            let target = if target.is_absolute() {
+                                target
+                            } else {
+                                state.current_path.join(target)
+                            };
+                            let sources = state.operation_targets();
+                            Some(if dialog.purpose == InputPurpose::Copy {
+                                Effect::Copy { sources, target }
+                            } else {
+                                Effect::Move { sources, target }
+                            })
+                        }
+                    }
+                    InputPurpose::SaveAs => {
+                        state.editor.as_ref().map(|(_, editor)| Effect::SaveFile {
+                            path: PathBuf::from(value),
+                            contents: editor.text().as_bytes().to_vec(),
+                            expected_modified: None,
+                            allow_overwrite: false,
+                        })
+                    }
+                    InputPurpose::SearchViewer => {
+                        if let Some((_, ViewerState::Ready(document))) = &mut state.viewer {
+                            document.search(value);
+                        }
+                        state.screen = Screen::Viewer;
+                        None
+                    }
+                    InputPurpose::SearchEditor => {
+                        if let Some((_, editor)) = &mut state.editor
+                            && !editor.find_next(&value)
+                        {
+                            state.message = Some(format!("Not found: {value}"));
+                        }
+                        state.screen = Screen::Editor;
+                        None
+                    }
+                    InputPurpose::QcdLabel => {
+                        if let Some(entry) = state.qcd.get_mut(state.selected_qcd) {
+                            entry.label = value;
+                        }
+                        state.screen = Screen::Qcd;
+                        None
+                    }
+                    InputPurpose::McdSearch => {
+                        if let Some(tree) = &mut state.mcd {
+                            tree.set_filter(value);
+                        }
+                        state.screen = Screen::Mcd;
+                        None
+                    }
+                };
+                if let Some(effect) = effect {
+                    state.screen = Screen::Progress;
+                    state.message = Some("Working...".to_string());
+                    return vec![effect];
+                }
+            } else if let Some(confirm) = state.confirm_dialog.take() {
+                match confirm.operation {
+                    ConfirmOperation::Delete { targets, permanent } => {
+                        state.screen = Screen::Progress;
+                        return vec![Effect::Delete {
+                            targets,
+                            permanent,
+                            current_directory: state.current_path.clone(),
+                        }];
+                    }
+                    ConfirmOperation::DiscardEditor => {
+                        state.editor = None;
+                        state.screen = Screen::Main;
+                    }
+                    ConfirmOperation::OverwriteSave { path } => {
+                        if let Some((_, editor)) = &state.editor {
+                            state.screen = Screen::Progress;
+                            return vec![Effect::SaveFile {
+                                path,
+                                contents: editor.text().as_bytes().to_vec(),
+                                expected_modified: None,
+                                allow_overwrite: true,
+                            }];
+                        }
+                    }
+                }
+            }
+        }
+        Action::CancelDialog => {
+            let mcd_dialog = state
+                .input_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.purpose == InputPurpose::McdSearch);
+            let qcd_dialog = state
+                .input_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.purpose == InputPurpose::QcdLabel);
+            state.input_dialog = None;
+            state.confirm_dialog = None;
+            state.screen = if mcd_dialog {
+                Screen::Mcd
+            } else if qcd_dialog {
+                Screen::Qcd
+            } else if state.editor.is_some() {
+                Screen::Editor
+            } else if state.viewer.is_some() {
+                Screen::Viewer
+            } else {
+                Screen::Main
+            };
+        }
+        Action::ViewerLoaded { path, result } => {
+            if state
+                .viewer
+                .as_ref()
+                .is_some_and(|(current, _)| current == &path)
+            {
+                state.viewer = Some((
+                    path,
+                    match result {
+                        Ok(bytes) => ViewerState::decode(bytes),
+                        Err(FsError::TooLarge { .. }) => ViewerState::TooLarge,
+                        Err(error) => ViewerState::Error(error.to_string()),
+                    },
+                ));
+            }
+        }
+        action @ (Action::ViewerLine(delta) | Action::ViewerPage(delta)) => {
+            if let Some((_, ViewerState::Ready(document))) = &mut state.viewer {
+                let amount = if matches!(action, Action::ViewerPage(_)) {
+                    10
+                } else {
+                    1
+                };
+                if delta < 0 {
+                    document.top_line = document.top_line.saturating_sub(amount);
+                } else {
+                    document.top_line =
+                        (document.top_line + amount).min(document.lines.len().saturating_sub(1));
+                }
+            }
+        }
+        Action::ShowViewerSearch => {
+            state.input_dialog = Some(InputDialog::new(
+                "Find",
+                "Search text",
+                "",
+                InputPurpose::SearchViewer,
+                None,
+            ));
+            state.screen = Screen::InputDialog;
+        }
+        Action::ViewerNextMatch { backwards } => {
+            if let Some((_, ViewerState::Ready(document))) = &mut state.viewer {
+                document.next_match(backwards);
+            }
+        }
+        Action::EditorLoaded {
+            path,
+            modified,
+            result,
+        } => match result {
+            Ok(bytes) if !bytes.contains(&0) => match String::from_utf8(bytes) {
+                Ok(text) => match EditorBuffer::new(text, modified) {
+                    Ok(editor) => {
+                        state.editor = Some((path, editor));
+                        state.screen = Screen::Editor;
+                        state.message = None;
+                    }
+                    Err(error) => {
+                        state.screen = Screen::Main;
+                        state.message = Some(error);
+                    }
+                },
+                Err(_) => {
+                    state.screen = Screen::Main;
+                    state.message = Some("Binary files cannot be edited.".to_string());
+                }
+            },
+            Ok(_) => {
+                state.screen = Screen::Main;
+                state.message = Some("Binary files cannot be edited.".to_string());
+            }
+            Err(error) => {
+                state.screen = Screen::Main;
+                state.message = Some(error.to_string());
+            }
+        },
+        Action::EditorCharacter(character) => {
+            if let Some((_, editor)) = &mut state.editor {
+                editor.insert(&character.to_string());
+            }
+        }
+        Action::EditorBackspace => {
+            if let Some((_, editor)) = &mut state.editor {
+                editor.backspace();
+            }
+        }
+        Action::EditorMoveHorizontal(delta) => {
+            if let Some((_, editor)) = &mut state.editor {
+                if delta < 0 {
+                    editor.move_left();
+                } else {
+                    editor.move_right();
+                }
+            }
+        }
+        Action::EditorMoveVertical(delta) => {
+            if let Some((_, editor)) = &mut state.editor {
+                editor.move_vertical(delta);
+            }
+        }
+        Action::EditorMoveLineBoundary(end) => {
+            if let Some((_, editor)) = &mut state.editor {
+                editor.move_line_boundary(end);
+            }
+        }
+        Action::EditorUndo => {
+            if let Some((_, editor)) = &mut state.editor {
+                editor.undo();
+            }
+        }
+        Action::EditorRedo => {
+            if let Some((_, editor)) = &mut state.editor {
+                editor.redo();
+            }
+        }
+        Action::ShowEditorSearch => {
+            state.input_dialog = Some(InputDialog::new(
+                "Find",
+                "Search text",
+                "",
+                InputPurpose::SearchEditor,
+                None,
+            ));
+            state.screen = Screen::InputDialog;
+        }
+        Action::SaveEditor => {
+            if let Some((path, editor)) = &state.editor {
+                state.screen = Screen::Progress;
+                return vec![Effect::SaveFile {
+                    path: path.clone(),
+                    contents: editor.text().as_bytes().to_vec(),
+                    expected_modified: editor.original_modified,
+                    allow_overwrite: true,
+                }];
+            }
+        }
+        Action::SaveEditorAs => {
+            if let Some((path, _)) = &state.editor {
+                state.input_dialog = Some(InputDialog::new(
+                    "Save As",
+                    "File path",
+                    path.to_string_lossy(),
+                    InputPurpose::SaveAs,
+                    None,
+                ));
+                state.screen = Screen::InputDialog;
+            }
+        }
+        Action::FileSaved {
+            path,
+            result,
+            modified,
+        } => match result {
+            Ok(()) => {
+                if let Some((editor_path, editor)) = &mut state.editor {
+                    *editor_path = path.clone();
+                    editor.mark_saved(modified);
+                }
+                state.screen = Screen::Editor;
+                state.message = Some(format!("Saved {}", path.display()));
+            }
+            Err(FsError::AlreadyExists { .. }) => {
+                state.confirm_dialog = Some(ConfirmDialog {
+                    title: "Overwrite File".to_string(),
+                    message: format!(
+                        "{} exists or changed outside Mdir4. Overwrite it?",
+                        path.display()
+                    ),
+                    confirm_label: "Overwrite".to_string(),
+                    operation: ConfirmOperation::OverwriteSave { path },
+                });
+                state.screen = Screen::ConfirmDialog;
+            }
+            Err(error) => {
+                state.screen = Screen::Editor;
+                state.message = Some(format!("Save failed: {error}"));
+            }
+        },
+        Action::FileOperationCompleted { message, result } => {
+            state.screen = Screen::Main;
+            state.marked.clear();
+            state.message = Some(match result {
+                Ok(summary) => format!(
+                    "{message}: {} succeeded, {} failed, {} skipped",
+                    summary.succeeded, summary.failed, summary.skipped
+                ),
+                Err(error) => format!("{message} failed: {error}"),
+            });
+            return vec![Effect::LoadDirectory(state.current_path.clone())];
+        }
+        Action::OperationProgress(summary) => {
+            state.message = Some(format!(
+                "Working: {} item(s), {} byte(s)",
+                summary.succeeded, summary.bytes
+            ));
+        }
+        Action::CancelOperation => {
+            state.message = Some("Cancelling operation...".to_string());
+            return vec![Effect::CancelOperation];
+        }
+        Action::ConflictRequested { source, target } => {
+            state.conflict = Some((source, target));
+            state.screen = Screen::ConflictDialog;
+        }
+        Action::ResolveConflict(decision) => {
+            state.conflict = None;
+            state.screen = Screen::Progress;
+            return vec![Effect::ResolveConflict(decision)];
+        }
+        Action::ToggleView => {
+            state.long_view = !state.long_view;
+            state.message = Some(if state.long_view {
+                "Long view".to_string()
+            } else {
+                "Short view".to_string()
+            });
+        }
+        Action::ShowMcd => {
+            let root_path = state
+                .current_path
+                .ancestors()
+                .last()
+                .unwrap_or(&state.current_path)
+                .to_path_buf();
+            let mut tree = crate::mcd::tree::DirectoryTree::default();
+            let root = tree.add_root(root_path.clone());
+            for path in &state.persisted_config.mcd_history {
+                tree.remember(path.clone());
+            }
+            tree.expand();
+            state.mcd = Some(tree);
+            state.screen = Screen::Mcd;
+            return vec![Effect::LoadMcdChildren {
+                node: root,
+                path: root_path,
+            }];
+        }
+        Action::McdLoaded { node, result } => {
+            if let Some(tree) = &mut state.mcd {
+                match result {
+                    Ok(children) => tree.set_children(node, children),
+                    Err(error) => tree.set_error(node, error.to_string()),
+                }
+                tree.expand_ancestors(&state.current_path);
+            }
+        }
+        Action::McdMove(delta) => {
+            if let Some(tree) = &mut state.mcd {
+                tree.move_selection(delta);
+            }
+        }
+        Action::McdCollapse => {
+            if let Some(tree) = &mut state.mcd {
+                tree.collapse_or_parent();
+            }
+        }
+        Action::McdExpand => {
+            if let Some(tree) = &mut state.mcd {
+                tree.expand();
+                if let Some(node) = tree.selected_node()
+                    && matches!(
+                        node.state,
+                        crate::mcd::tree::LoadState::Unloaded
+                            | crate::mcd::tree::LoadState::Error(_)
+                    )
+                {
+                    return vec![Effect::LoadMcdChildren {
+                        node: node.id,
+                        path: node.path.clone(),
+                    }];
+                }
+            }
+        }
+        Action::McdRescan => {
+            if let Some(tree) = &state.mcd
+                && let Some(node) = tree.selected_node()
+            {
+                return vec![Effect::LoadMcdChildren {
+                    node: node.id,
+                    path: node.path.clone(),
+                }];
+            }
+        }
+        Action::ShowMcdSearch => {
+            state.input_dialog = Some(InputDialog::new(
+                "Search MCD",
+                "Loaded/history path",
+                "",
+                InputPurpose::McdSearch,
+                None,
+            ));
+            state.screen = Screen::InputDialog;
+        }
+        Action::McdOpen => {
+            if let Some(path) = state
+                .mcd
+                .as_ref()
+                .and_then(|tree| tree.selected_node())
+                .map(|node| node.path.clone())
+            {
+                state
+                    .persisted_config
+                    .mcd_history
+                    .retain(|entry| entry != &path);
+                state.persisted_config.mcd_history.insert(0, path.clone());
+                state.persisted_config.mcd_history.truncate(100);
+                state.mcd = None;
+                state.screen = Screen::Main;
+                return vec![Effect::LoadDirectory(path)];
+            }
+        }
+        Action::ShowQcd => {
+            state.selected_qcd = state.selected_qcd.min(state.qcd.len().saturating_sub(1));
+            state.screen = Screen::Qcd;
+        }
+        Action::QcdMove(delta) => {
+            state.selected_qcd = if delta < 0 {
+                state.selected_qcd.saturating_sub(1)
+            } else {
+                (state.selected_qcd + 1).min(state.qcd.len().saturating_sub(1))
+            };
+        }
+        Action::QcdOpen => {
+            if let Some(path) = state
+                .qcd
+                .get(state.selected_qcd)
+                .map(|entry| entry.path.clone())
+            {
+                state.screen = Screen::Main;
+                return vec![Effect::LoadDirectory(path)];
+            }
+        }
+        Action::QcdAddCurrent => {
+            if state.qcd.len() >= 100 {
+                state.message = Some("QCD is full (maximum 100 entries).".to_string());
+            } else if let Some(index) = state
+                .qcd
+                .iter()
+                .position(|entry| entry.path == state.current_path)
+            {
+                state.selected_qcd = index;
+                state.message = Some("This path is already in QCD.".to_string());
+            } else {
+                let label = state
+                    .current_path
+                    .file_name()
+                    .unwrap_or(state.current_path.as_os_str())
+                    .to_string_lossy()
+                    .into_owned();
+                state.qcd.push(crate::config::schema::QcdEntry {
+                    label,
+                    path: state.current_path.clone(),
+                    position: state.qcd.len(),
+                });
+                state.selected_qcd = state.qcd.len() - 1;
+            }
+        }
+        Action::QcdDelete => {
+            if state.selected_qcd < state.qcd.len() {
+                state.qcd.remove(state.selected_qcd);
+            }
+            state.selected_qcd = state.selected_qcd.min(state.qcd.len().saturating_sub(1));
+            for (position, entry) in state.qcd.iter_mut().enumerate() {
+                entry.position = position;
+            }
+        }
+        Action::QcdReorder(delta) => {
+            if !state.qcd.is_empty() {
+                let target = if delta < 0 {
+                    state.selected_qcd.saturating_sub(1)
+                } else {
+                    (state.selected_qcd + 1).min(state.qcd.len() - 1)
+                };
+                state.qcd.swap(state.selected_qcd, target);
+                state.selected_qcd = target;
+                for (position, entry) in state.qcd.iter_mut().enumerate() {
+                    entry.position = position;
+                }
+            }
+        }
+        Action::QcdEdit => {
+            if let Some(entry) = state.qcd.get(state.selected_qcd) {
+                state.input_dialog = Some(InputDialog::new(
+                    "Edit QCD",
+                    "Label",
+                    entry.label.clone(),
+                    InputPurpose::QcdLabel,
+                    None,
+                ));
+                state.screen = Screen::InputDialog;
+            }
+        }
+        Action::QcdDigit(index) => {
+            if index < state.qcd.len() {
+                state.selected_qcd = index;
+                return reduce(state, Action::QcdOpen);
+            }
+        }
+        Action::ShowMenu => {
+            state.menu_category = 0;
+            state.menu_item = 0;
+            state.screen = Screen::Menu;
+        }
+        Action::MenuMove(delta) => {
+            let len = menu_len(state.menu_category);
+            state.menu_item = if delta < 0 {
+                state.menu_item.saturating_sub(1)
+            } else {
+                (state.menu_item + 1).min(len.saturating_sub(1))
+            };
+        }
+        Action::MenuCategory(delta) => {
+            state.menu_category = if delta < 0 {
+                state.menu_category.checked_sub(1).unwrap_or(5)
+            } else {
+                (state.menu_category + 1) % 6
+            };
+            state.menu_item = 0;
+        }
+        Action::MenuOpen => {
+            if let Some(action) = menu_command(state.menu_category, state.menu_item)
+                .and_then(|id| state.registry.action_for_id(id))
+            {
+                state.screen = Screen::Main;
+                return reduce(state, action);
+            }
+        }
+        Action::ShowSettings => {
+            state.settings_preview = Some(SettingsDraft {
+                long_view: state.long_view,
+                show_hidden: state.show_hidden,
+                theme: state.theme.name.clone(),
+                column_count: state.persisted_config.columns.count,
+                column_width: state.persisted_config.columns.width,
+                sort_key: state.sort_key,
+                sort_direction: state.sort_direction,
+                use_custom_keymap: !state.persisted_config.keymap.is_empty(),
+            });
+            state.settings_cursor = 0;
+            state.screen = Screen::Settings;
+        }
+        Action::SettingsMove(delta) => {
+            state.settings_cursor = if delta < 0 {
+                state.settings_cursor.saturating_sub(1)
+            } else {
+                (state.settings_cursor + 1).min(7)
+            };
+        }
+        Action::SettingsChange(delta) => {
+            if let Some(draft) = &mut state.settings_preview {
+                match state.settings_cursor {
+                    0 => draft.long_view = !draft.long_view,
+                    1 => {
+                        let names = ["Classic", "DOS Blue", "Dark", "Mono", "Light"];
+                        let index = names
+                            .iter()
+                            .position(|name| name.eq_ignore_ascii_case(&draft.theme))
+                            .unwrap_or(0);
+                        draft.theme = names[(index + 1) % names.len()].to_string();
+                    }
+                    2 => {
+                        draft.column_count = Some(if delta < 0 {
+                            draft.column_count.unwrap_or(1).saturating_sub(1).max(1)
+                        } else {
+                            (draft.column_count.unwrap_or(1) + 1).min(6)
+                        })
+                    }
+                    3 => {
+                        draft.column_width = Some(if delta < 0 {
+                            draft.column_width.unwrap_or(40).saturating_sub(2).max(20)
+                        } else {
+                            (draft.column_width.unwrap_or(40) + 2).min(80)
+                        })
+                    }
+                    4 => draft.sort_key = draft.sort_key.next(),
+                    5 => {
+                        draft.sort_direction = if draft.sort_direction == SortDirection::Ascending {
+                            SortDirection::Descending
+                        } else {
+                            SortDirection::Ascending
+                        }
+                    }
+                    6 => draft.show_hidden = !draft.show_hidden,
+                    _ => draft.use_custom_keymap = !draft.use_custom_keymap,
+                }
+            }
+        }
+        Action::ApplySettings => {
+            if let Some(draft) = state.settings_preview.take() {
+                state.long_view = draft.long_view;
+                state.show_hidden = draft.show_hidden;
+                state.sort_key = draft.sort_key;
+                state.sort_direction = draft.sort_direction;
+                state.persisted_config.columns.count = draft.column_count;
+                state.persisted_config.columns.width = draft.column_width;
+                state.layout_settings.column_count = draft
+                    .column_count
+                    .map(crate::layout::ColumnCountMode::Fixed)
+                    .unwrap_or_default();
+                state.layout_settings.column_width = draft
+                    .column_width
+                    .map(crate::layout::ColumnWidthMode::Custom)
+                    .unwrap_or_default();
+                if !draft.use_custom_keymap {
+                    state.persisted_config.keymap.clear();
+                    state.registry = command_registry::CommandRegistry::default();
+                }
+                if let Some(palette) = crate::theme::catalog::Theme::builtin(&draft.theme) {
+                    state.theme = palette;
+                }
+                state.screen = Screen::Main;
+                if let Some(path) = state.config_path.clone() {
+                    return vec![Effect::SaveConfig {
+                        path,
+                        config: config_from_state(state),
+                    }];
+                }
+            }
+        }
+        Action::SortKeyNext => {
+            let selected = state.selected_entry().map(|entry| entry.path.clone());
+            state.sort_key = state.sort_key.next();
+            sort_entries(&mut state.entries, state.sort_key, state.sort_direction);
+            state.selected = selected
+                .and_then(|path| state.entries.iter().position(|entry| entry.path == path))
+                .unwrap_or_else(|| state.selected.min(state.entries.len().saturating_sub(1)));
+            state.message = Some(format!(
+                "Sort: {:?} {:?}",
+                state.sort_key, state.sort_direction
+            ));
+        }
+        Action::SortDirectionToggle => {
+            state.sort_direction = match state.sort_direction {
+                SortDirection::Ascending => SortDirection::Descending,
+                SortDirection::Descending => SortDirection::Ascending,
+            };
+            sort_entries(&mut state.entries, state.sort_key, state.sort_direction);
+        }
+        Action::ToggleHidden => {
+            state.show_hidden = !state.show_hidden;
+            return vec![Effect::LoadDirectory(state.current_path.clone())];
+        }
+        Action::OpenDrivePicker => {
+            state.screen = Screen::DrivePicker;
+            state.drives.clear();
+            state.selected_drive = 0;
+            return vec![Effect::LoadDrives];
+        }
+        Action::DrivesLoaded(result) => match result {
+            Ok(drives) => {
+                state.drives = drives;
+                state.selected_drive = 0;
+                if state.drives.is_empty() {
+                    state.message = Some("No drives are available.".to_string());
+                }
+            }
+            Err(error) => state.message = Some(format!("Could not list drives: {error}")),
+        },
+        Action::DriveMove(delta) => {
+            state.selected_drive = if delta < 0 {
+                state.selected_drive.saturating_sub(1)
+            } else {
+                (state.selected_drive + 1).min(state.drives.len().saturating_sub(1))
+            };
+        }
+        Action::OpenSelectedDrive => {
+            if let Some(path) = state.drives.get(state.selected_drive).cloned() {
+                state.screen = Screen::Main;
+                return vec![Effect::LoadDirectory(path)];
+            }
+        }
+        Action::RequestQuit => state.screen = Screen::QuitConfirm,
+        Action::CloseOverlay => {
+            if state.screen == Screen::Viewer {
+                state.viewer = None;
+            } else if state.screen == Screen::Editor {
+                if state
+                    .editor
+                    .as_ref()
+                    .is_some_and(|(_, editor)| editor.dirty)
+                {
+                    state.confirm_dialog = Some(ConfirmDialog {
+                        title: "Unsaved Changes".to_string(),
+                        message: "Discard unsaved changes?".to_string(),
+                        confirm_label: "Discard".to_string(),
+                        operation: ConfirmOperation::DiscardEditor,
+                    });
+                    state.screen = Screen::ConfirmDialog;
+                    return Vec::new();
+                }
+                state.editor = None;
+            }
+            state.screen = Screen::Main;
+            state.settings_preview = None;
+        }
+        Action::ClearMessage => state.message = None,
+        Action::ConfirmQuit => state.should_quit = true,
+    }
+    Vec::new()
+}
+
+fn menu_len(category: usize) -> usize {
+    match category {
+        0 | 1 => 4,
+        2 | 3 => 3,
+        _ => 1,
+    }
+}
+
+fn menu_command(category: usize, item: usize) -> Option<command_registry::CommandId> {
+    use command_registry::CommandId::*;
+    Some(match (category, item) {
+        (0, 0) => Rename,
+        (0, 1) => Copy,
+        (0, 2) => Move,
+        (0, 3) => Delete,
+        (1, 0) => ToggleView,
+        (1, 1) => SortKeyNext,
+        (1, 2) => SortDirectionToggle,
+        (1, 3) => ToggleHidden,
+        (2, 0) => MakeDirectory,
+        (2, 1) => Mcd,
+        (2, 2) => Qcd,
+        (3, 0) => View,
+        (3, 1) => Edit,
+        (3, 2) => OpenDrivePicker,
+        (4, 0) => Settings,
+        (5, 0) => Quit,
+        _ => return None,
+    })
+}
+
+pub fn config_from_state(state: &AppState) -> crate::config::Config {
+    let mut config = state.persisted_config.clone();
+    config.last_path = Some(state.current_path.clone());
+    config.view = if state.long_view {
+        crate::config::schema::ViewMode::Long
+    } else {
+        crate::config::schema::ViewMode::Short
+    };
+    config.show_hidden = state.show_hidden;
+    config.theme = state.theme.name.clone();
+    config.qcd = state.qcd.clone();
+    config.sort.key = format!("{:?}", state.sort_key).to_lowercase();
+    config.sort.descending = state.sort_direction == SortDirection::Descending;
+    config
+}
+
+fn toggle_current_mark(state: &mut AppState) {
+    let entry = state.selected_entry().cloned();
+    selection::toggle(&mut state.marked, entry.as_ref());
+}
+
+fn parent_of(path: &Path) -> Option<PathBuf> {
+    path.parent().map(Path::to_path_buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(name: &str, kind: EntryKind) -> FileEntry {
+        FileEntry::new(
+            PathBuf::from(format!("/test/{name}")),
+            name.into(),
+            kind,
+            10,
+        )
+    }
+
+    fn state() -> AppState {
+        AppState {
+            current_path: PathBuf::from("/test"),
+            entries: vec![entry("a", EntryKind::File), entry("b", EntryKind::File)],
+            selected: 0,
+            marked: HashSet::new(),
+            viewport: Viewport {
+                width: 80,
+                height: 25,
+            },
+            layout_settings: LayoutSettings::default(),
+            screen: Screen::Main,
+            message: None,
+            free_space: None,
+            should_quit: false,
+            input_dialog: None,
+            confirm_dialog: None,
+            viewer: None,
+            editor: None,
+            sort_key: SortKey::Name,
+            sort_direction: SortDirection::Ascending,
+            show_hidden: true,
+            drives: Vec::new(),
+            selected_drive: 0,
+            conflict: None,
+            long_view: false,
+            theme: crate::theme::catalog::Theme::classic(),
+            mcd: None,
+            qcd: Vec::new(),
+            selected_qcd: 0,
+            menu_category: 0,
+            menu_item: 0,
+            settings_cursor: 0,
+            settings_preview: None,
+            config_path: None,
+            persisted_config: crate::config::Config::default(),
+            registry: command_registry::CommandRegistry::default(),
+        }
+    }
+
+    #[test]
+    fn mark_and_select_all_are_independent_from_cursor() {
+        let mut app = state();
+        reduce(&mut app, Action::ToggleMark);
+        assert!(app.marked.contains(&PathBuf::from("/test/a")));
+        assert_eq!(app.selected, 0);
+
+        reduce(&mut app, Action::SelectAll);
+        assert_eq!(app.marked.len(), 2);
+        reduce(&mut app, Action::SelectAll);
+        assert_eq!(app.marked.len(), 2);
+    }
+
+    #[test]
+    fn opening_directory_returns_load_effect() {
+        let mut app = state();
+        app.entries[0].kind = EntryKind::Directory;
+
+        let effects = reduce(&mut app, Action::Open);
+
+        assert_eq!(
+            effects,
+            vec![Effect::LoadDirectory(PathBuf::from("/test/a"))]
+        );
+    }
+
+    #[test]
+    fn long_view_qcd_menu_and_settings_preserve_state() {
+        let mut app = state();
+        app.current_path = PathBuf::from("/test/work");
+        let selected = app.selected_entry().unwrap().path.clone();
+        reduce(&mut app, Action::ToggleView);
+        assert!(app.long_view);
+        assert_eq!(app.selected_entry().unwrap().path, selected);
+
+        reduce(&mut app, Action::QcdAddCurrent);
+        reduce(&mut app, Action::QcdAddCurrent);
+        assert_eq!(app.qcd.len(), 1);
+        reduce(&mut app, Action::ShowQcd);
+        assert_eq!(app.screen, Screen::Qcd);
+        assert!(matches!(
+            reduce(&mut app, Action::QcdOpen).as_slice(),
+            [Effect::LoadDirectory(_)]
+        ));
+
+        reduce(&mut app, Action::ShowMenu);
+        reduce(&mut app, Action::MenuCategory(1));
+        let before = app.long_view;
+        reduce(&mut app, Action::MenuOpen);
+        assert_ne!(app.long_view, before);
+
+        reduce(&mut app, Action::ShowSettings);
+        reduce(&mut app, Action::SettingsChange(1));
+        reduce(&mut app, Action::CloseOverlay);
+        assert_eq!(app.screen, Screen::Main);
+        assert!(app.settings_preview.is_none());
+    }
+
+    #[test]
+    fn quit_requires_explicit_confirmation() {
+        let mut app = state();
+        reduce(&mut app, Action::RequestQuit);
+        assert_eq!(app.screen, Screen::QuitConfirm);
+        assert!(!app.should_quit);
+
+        reduce(&mut app, Action::CloseOverlay);
+        assert_eq!(app.screen, Screen::Main);
+        reduce(&mut app, Action::RequestQuit);
+        reduce(&mut app, Action::ConfirmQuit);
+        assert!(app.should_quit);
+    }
+}
