@@ -244,6 +244,8 @@
     올바른 `├─`/`└─` connector와 범위 표시. filesystem root부터 현재 디렉터리까지 ancestor
     chain을 순차 로드·펼치고 현재 디렉터리를 첫 선택으로 사용.
     ancestor 로드 중에는 부분 트리를 숨기고 고정 loading 화면을 표시한 뒤 완성된 한 프레임으로 전환.
+    사용자가 다른 node를 확장한 뒤 child load가 완료돼도 현재 선택 node ID를 복원해 커서가
+    시작 디렉터리로 되돌아가지 않도록 함.
   - 검증: MCD가 main 파일/metadata/footer를 남기지 않는 render test, 전체 51 lib tests 및
     전체 회귀 게이트 통과.
 - [ ] M4+ EDIT-01 외부 `$EDITOR` 연결 화면

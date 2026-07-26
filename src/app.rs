@@ -923,6 +923,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
         Action::McdLoaded { node, result } => {
             if let Some(tree) = &mut state.mcd {
+                let selected = tree.selected_node().map(|node| node.id);
                 let loaded = match result {
                     Ok(children) => {
                         tree.set_children(node, children);
@@ -934,6 +935,9 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                     }
                 };
                 tree.expand_ancestors(&state.current_path);
+                if let Some(selected) = selected {
+                    tree.select_node(selected);
+                }
                 if loaded
                     && let Some((next, path)) = tree.next_unloaded_on_path(&state.current_path)
                 {
@@ -1457,6 +1461,77 @@ mod tests {
                 node: crate::mcd::tree::NodeId(1),
                 path: PathBuf::from("/"),
             }]
+        );
+    }
+
+    #[test]
+    fn mcd_child_load_preserves_the_users_current_selection() {
+        let mut app = state();
+        app.current_path = PathBuf::from("/test/work");
+        reduce(&mut app, Action::ShowMcd);
+        let root = app
+            .mcd
+            .as_ref()
+            .unwrap()
+            .node_for_path(Path::new("/"))
+            .unwrap()
+            .id;
+        reduce(
+            &mut app,
+            Action::McdLoaded {
+                node: root,
+                result: Ok(vec![PathBuf::from("/other"), PathBuf::from("/test")]),
+            },
+        );
+        let test = app
+            .mcd
+            .as_ref()
+            .unwrap()
+            .node_for_path(Path::new("/test"))
+            .unwrap()
+            .id;
+        reduce(
+            &mut app,
+            Action::McdLoaded {
+                node: test,
+                result: Ok(vec![PathBuf::from("/test/work")]),
+            },
+        );
+        let work = app
+            .mcd
+            .as_ref()
+            .unwrap()
+            .node_for_path(Path::new("/test/work"))
+            .unwrap()
+            .id;
+        reduce(
+            &mut app,
+            Action::McdLoaded {
+                node: work,
+                result: Ok(Vec::new()),
+            },
+        );
+
+        let other = app
+            .mcd
+            .as_ref()
+            .unwrap()
+            .node_for_path(Path::new("/other"))
+            .unwrap()
+            .id;
+        assert!(app.mcd.as_mut().unwrap().select_node(other));
+        reduce(&mut app, Action::McdExpand);
+        reduce(
+            &mut app,
+            Action::McdLoaded {
+                node: other,
+                result: Ok(vec![PathBuf::from("/other/child")]),
+            },
+        );
+
+        assert_eq!(
+            app.mcd.as_ref().unwrap().selected_node().unwrap().path,
+            PathBuf::from("/other")
         );
     }
 

@@ -95,10 +95,14 @@ impl DirectoryTree {
                 node.expanded = true;
             }
         }
-        if let Some(id) = self.by_path.get(path).copied()
-            && let Some(index) = self.visible_rows().iter().position(|row| row.id == id)
-        {
+    }
+
+    pub fn select_node(&mut self, id: NodeId) -> bool {
+        if let Some(index) = self.visible_rows().iter().position(|row| row.id == id) {
             self.selected = index;
+            true
+        } else {
+            false
         }
     }
 
@@ -123,10 +127,8 @@ impl DirectoryTree {
             parent = Some(id);
             selected = Some(id);
         }
-        if let Some(id) = selected
-            && let Some(index) = self.visible_rows().iter().position(|row| row.id == id)
-        {
-            self.selected = index;
+        if let Some(id) = selected {
+            self.select_node(id);
         }
         selected
     }
