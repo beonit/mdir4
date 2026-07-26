@@ -26,8 +26,8 @@ unsupported seam 자동 test로 `Passed` 처리하고 Evidence에
 | S0-LOC-05 | Local adapter가 v1 동작/fast path를 회귀시키지 않음 | S0-03 | v1 full gate/call count | Local walkthrough | Not started | — |
 | S0-CAP-01 | S0 capability는 READ만 정의하고 mutation/RESUME bit·placeholder가 없음 | S0-03 | capability unit/source | 없음 | Not started | — |
 | S0-CAP-02 | DOWNLOAD/Edit capability가 없고 Remote F4는 disabled definition만 가짐 | S0-03 | enum/source/mapper | F4 reason | Not started | — |
-| S0-CFG-01 | base timeout/schema default/range가 roundtrip됨 | S0-02 | config tests | 설정 확인 | Not started | — |
-| S0-CFG-02 | id/name/description/host/root/root_hex/RO와 field-path 오류가 정확함 | S0-02 | invalid matrix | 오류 문구 | Not started | — |
+| S0-CFG-01 | base timeout/schema default/range와 `.ssh/config` literal Host discovery가 결정적으로 동작함 | S0-02 | config/discovery tests | 설정 확인 | Not started | — |
+| S0-CFG-02 | optional id/name/description/host/root/root_hex/RO override와 field-path 오류가 정확함 | S0-02 | invalid matrix | 오류 문구 | Not started | — |
 | S0-CFG-03 | credential/resolved endpoint 관련 config field가 없음 | S0-02 | schema/secret scan | 없음 | Not started | — |
 | S0-CANCEL-01 | queue 밖 thread-safe handle이 controlled blocking Fake call을 preempt함 | S0-00,04,06 | block sequence | 없음 | Not started | — |
 | S0-CANCEL-02 | 모든 foundation request가 monotonic deadline을 받고 Timeout/Cancelled를 구분함 | S0-04,06 | deadline/race | 없음 | Not started | — |
@@ -43,7 +43,7 @@ unsupported seam 자동 test로 `Passed` 처리하고 Evidence에
 | S0-AUTH-02 | transport ADR가 OpenSSH config/agent/known_hosts/noninteractive/path/cancel/Windows를 승인 | S0-00 | ADR checklist/spike | 검토 | Not started | — |
 | S0-AUTH-03 | isolated harness에 host-key bypass/auto-accept가 없음 | S0-08 | changed-key/source scan | 없음 | Not started | — |
 | S0-AUTH-04 | state/error/log/snapshot에 credential/resolved endpoint/key path가 없음 | S0-02,05,06 | redaction scan | 오류 화면 | Not started | — |
-| S0-UI-01 | Local과 등록 Remote가 같은 picker에 표시됨 | S0-07 | component snapshot | 키 감각 | Not started | — |
+| S0-UI-01 | Local과 `.ssh/config`에서 발견한 literal Remote alias가 같은 picker에 표시됨 | S0-07 | component snapshot | 키 감각 | Not started | — |
 | S0-UI-02 | Main F3 View/MCD F3 Drive/F12 Locations context가 충돌하지 않음 | S0-07 | context mapper | 각 화면 | Not started | — |
 | S0-UI-03 | picker Up/Down/Enter/Esc와 English Help label이 Registry와 일치하고 사용자 name/path를 보존 | S0-07 | mapper/scenario/snapshot | 키 감각 | Not started | — |
 | S0-INTEG-01 | generic seam이 Remote를 Unsupported로 매핑하고 Git job/dynamic contribution 0을 증명 | S0-03,09 | generic seam 또는 actual Git | 조건부 | Not started | — |

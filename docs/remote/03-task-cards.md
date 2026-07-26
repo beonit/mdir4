@@ -23,7 +23,7 @@ primary test/evidence 파일을 함께 수정하며, 다른 카드의 primary �
 |---|---|---|
 | S0-00 | `docs/architecture/adr-006-remote-location-foundation.md` | `tests/remote_backend_contract.rs`, `docs/remote/05-acceptance-matrix.md` |
 | S0-01 | `src/location/id.rs`, `src/location/path.rs` | `tests/location_model.rs` |
-| S0-02 | `src/location/config.rs`, `src/config/schema.rs` | `tests/config_roundtrip.rs`, `tests/remote_backend_contract.rs` |
+| S0-02 | `src/location/config.rs`, `src/config/schema.rs`, `src/adapters/openssh_hosts.rs` | `tests/config_roundtrip.rs`, `tests/remote_backend_contract.rs` |
 | S0-03 | `src/location/manager.rs`, `src/location/capability.rs`, `src/ports/location_reader.rs`, `src/adapters/local_location.rs` | `tests/location_model.rs`, `tests/remote_backend_contract.rs` |
 | S0-04 | `src/location/state.rs`, `src/runtime/job.rs`, `src/runtime/lane.rs` | `tests/remote_faults.rs` |
 | S0-05 | `src/adapters/fake_remote.rs` | `tests/support/remote.rs`, `tests/remote_backend_contract.rs` |
@@ -48,7 +48,7 @@ primary test/evidence 파일을 함께 수정하며, 다른 카드의 primary �
 | S2-08 | `src/runtime/remote_lane.rs`, `src/operations/transfer_coordinator.rs`, `src/location/state.rs` | `tests/remote_faults.rs` |
 | S2-09 | 없음 — gate-only(production 변경 금지) | `docs/remote/05-acceptance-matrix.md`, `docs/implementation-plan/progress.md` |
 | S3-01 | `src/location/state.rs`, `src/location/config.rs` | `tests/remote_backend_contract.rs`, `tests/remote_scenarios.rs`, `tests/snapshots/remote/cache_state.snap` |
-| S3-02 | `src/ports/ssh_host_discovery.rs`, `src/adapters/openssh_hosts.rs` | `tests/remote_backend_contract.rs` |
+| S3-02 | `src/location/ui/picker.rs`, `src/location/config.rs` | `tests/remote_scenarios.rs`, `tests/snapshots/remote/registration.snap` |
 | S3-03 | `src/location/ui/picker.rs`, `src/location/config.rs` | `tests/remote_scenarios.rs`, `tests/snapshots/remote/registration.snap` |
 | S3-04 | `Cargo.toml`, `src/operations/transfer.rs`, `src/ports/location_writer.rs`, `src/ports/remote_transport.rs`, `src/adapters/local_location.rs`, `src/app/reducer.rs`, `src/ui/dialogs/progress.rs` | `tests/remote_faults.rs`, `tests/remote_scenarios.rs`, `tests/remote_real_integration.rs` |
 | S3-05 | `src/location/metadata.rs`, `src/location/path.rs`, `src/location/config.rs`, `src/adapters/sftp/mod.rs` | `tests/remote_backend_contract.rs`, `tests/remote_real_integration.rs` |
@@ -92,15 +92,19 @@ primary test/evidence 파일을 함께 수정하며, 다른 카드의 primary �
 ## S0-02 Remote config schema와 migration
 
 - 선행: S0-01, Core M3 config
-- 목표: stable id와 credential 없는 canonical schema를 안전하게 저장한다.
+- 목표: `.ssh/config`의 literal Host alias를 접속 대상으로 발견하고, stable id와 credential 없는
+  optional override schema를 안전하게 저장한다.
 - 파일: `src/location/config.rs`, config migration/tests
 - 작업:
-  1. timeout defaults와 `id/name/description/host/root/root_hex/read_only`를 구현한다.
-  2. 범위/unique/alias/root/unknown-field validation과 field path 오류를 구현한다.
-  3. UTF-8 `root`와 non-UTF-8 `root_hex` 상호 배타 encoding을 roundtrip한다.
-  4. 손상 config 보존과 원자적 저장을 Core config와 공유한다.
-- 테스트: zero/one/many, stable id after display rename, duplicate id/name, invalid display/alias/root,
-  forbidden credential fields, defaults, unknown field, legacy config.
+  1. `~/.ssh/config`와 Include에서 literal Host alias만 발견한다. wildcard/negation을 대상에서
+     제외하고, username/key/hostname/port를 반환하지 않는다.
+  2. timeout defaults와 optional `id/name/description/host/root/root_hex/read_only` override를 구현한다.
+  3. 범위/unique/alias/root/unknown-field validation과 field path 오류를 구현한다.
+  4. UTF-8 `root`와 non-UTF-8 `root_hex` 상호 배타 encoding을 roundtrip한다.
+  5. 손상 config 보존과 원자적 저장을 Core config와 공유한다.
+- 테스트: temp config의 comments/multiple Host/Include/cycle/wildcard/negation/Unicode/error,
+  zero/one/many override, stable id after display rename, duplicate id/name, invalid display/alias/root,
+  forbidden credential fields, defaults, unknown field, legacy config; real home access 0.
 - progress/evidence:
   - [ ] config roundtrip/migration test 결과 기록
   - [ ] serialized config/error/snapshot secret scan 기록
@@ -452,24 +456,24 @@ primary test/evidence 파일을 함께 수정하며, 다른 카드의 primary �
   - [ ] FixedClock/cache test와 snapshots 기록
   - [ ] hit calls 0/manual refresh 1/invalidation refresh 1 기록
 
-## S3-02 OpenSSH Host discovery adapter
+## S3-02 Discovered-host override and picker hardening
 
 - 선행: S3-01, S0-02
-- 목표: credential을 해석/저장하지 않고 등록 후보 alias만 제공한다.
-- 작업: platform config path/Include, literal Host alias, wildcard/negation 처리,
-  safe description, parsing error isolation; registered config와 별도 model.
-- 테스트: comments/multiple Host/Include/cycle/wildcard/Unicode/error; real home access 0;
+- 목표: direct discovery를 유지하면서 optional display/root/read-only override UI를 다듬는다.
+- 작업: discovered alias와 override 일치/고아 override, safe description, parsing diagnostic,
+  display rename과 root/read-only form을 구현한다. 발견 alias는 자동 등록하거나 숨기지 않는다.
+- 테스트: discovered-only alias, override match/orphan, cancel/rename/root/read-only, real home access 0;
   반환 model에 username/key/hostname/port field 0.
 - progress/evidence:
   - [ ] temp-config discovery contract 결과 기록
   - [ ] credential field/source scan 기록
 
-## S3-03 Host browser와 Remote registration UI
+## S3-03 Remote override editor UI
 
 - 선행: S3-02
-- 목표: 발견 후보를 명시적 form으로 등록/편집/삭제한다.
-- 작업: registered/discovered group, id/name/description/alias/root/RO form,
-  validation, atomic save/delete, no auto-registration, id immutable edit policy.
+- 목표: discovered alias에 대한 optional display/root/read-only override를 명시적으로 편집/삭제한다.
+- 작업: discovered/override group, id/name/description/alias/root/RO form,
+  validation, atomic save/delete, no auto-registration, id immutable edit policy를 구현한다.
 - 테스트: cancel/duplicate/rename display/stable id/forbidden credential widget absence,
   snapshots, `.ssh` files before/after unchanged.
 - progress/evidence:

@@ -39,14 +39,14 @@ S0-00이 transport/path ADR을 승인하면 그 ADR을 이 목록의 ADR-005 다
 | 경로 | protocol bytes를 보존하고 display text와 절대 재혼합하지 않음 |
 | 취소 | worker 밖의 thread-safe `CancelHandle`이 token을 신호; 모든 blocking call은 deadline도 받음 |
 | 결과 identity | 화면 load는 view generation, 연결은 session epoch, 작업은 `OperationId`로 분리 |
-| 인증 | OpenSSH alias/config/agent/known_hosts에 위임; credential UI/저장 없음 |
+| 인증/대상 | `~/.ssh/config`의 literal Host alias/config/agent/known_hosts에 위임; credential UI/저장 없음 |
 | read-only | UI/reducer/planner/backend 모든 계층에서 mutation 차단 |
 | Viewer | F3와 regular-file Enter는 Mdir4 Viewer; OS launcher 호출 0 |
 | picker key | Main F3는 View; MCD context F3 Drive와 F12 Locations가 picker를 엶 |
 | Editor | Remote Edit/Save는 S0~S3 전체에서 제외; F4 disabled |
 | cache | S1은 마지막 visible listing만 유지; reusable TTL/LRU cache는 S3 |
 | resume | S3 opt-in; source 전체와 partial prefix SHA-256/길이 검증, mismatch별 오류, 자동 restart 없음 |
-| SSH Host discovery | 등록 Remote 탐색과 분리해 S3 registration UI에서만 추가 |
+| SSH Host discovery | `~/.ssh/config`(+Include)의 literal Host alias가 picker의 직접 접속 대상; optional override만 Mdir4 config에 저장 |
 | Git | Remote에서 Git discover/job/dynamic contribution 0; 정적 command는 disabled; 별도 후속 ADR 전 Local 전용 |
 
 ## 실행 순서

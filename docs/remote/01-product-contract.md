@@ -8,7 +8,8 @@ display name과 protocol path에서 만든 안전한 display text는 번역하�
 
 ## 1. 제품 정의와 단계
 
-Remote는 SFTP 파일 시스템을 Core `Location`으로 추가한다.
+Remote는 SFTP 파일 시스템을 Core `Location`으로 추가한다. 원격 접속 후보는 사용자의
+`~/.ssh/config`에서 발견한 OpenSSH `Host` alias다.
 
 ```text
 Locations
@@ -40,9 +41,9 @@ directory_cache_ttl_seconds = 30
 directory_cache_max_entries = 128
 
 [[remote.locations]]
+# Optional display/root/read-only override for a discovered Host alias.
 id = "dev"
 name = "DEV"
-description = "Development"
 host = "dev"
 root = "/home/ubuntu"
 read_only = false
@@ -56,8 +57,10 @@ root = "/var/www"
 read_only = true
 ```
 
-S0 schema는 timeout과 `remote.locations`까지만 추가한다. S3-01 migration이 cache 두 필드를
-추가한다. 구현되지 않은 미래 field를 미리 수용하거나 조용히 무시하지 않는다.
+S0 schema는 timeout과 선택적인 `remote.locations` override까지만 추가한다. 접속 대상의
+source of truth는 항상 `~/.ssh/config`이며, override가 없는 발견 alias도 picker에서 바로
+선택할 수 있다. S3-01 migration이 cache 두 필드를 추가한다. 구현되지 않은 미래 field를
+미리 수용하거나 조용히 무시하지 않는다.
 
 기본값과 유효성:
 
@@ -71,7 +74,7 @@ S0 schema는 timeout과 `remote.locations`까지만 추가한다. S3-01 migratio
 | `name` | 필수 변경 가능한 표시명, trim된 exact 값 unique, 2~12 terminal cells, control/newline 금지 |
 | `description` | 기본 `""`; 최대 60 cells, control/newline 금지 |
 | `host` | 필수 OpenSSH alias; 공백/control/선행 `-`/URI/credential form 금지 |
-| `root` | UTF-8 절대 remote path; `root_hex`와 상호 배타; `/` 허용 |
+| `root` | override에서만 선택적 UTF-8 절대 remote path; 없으면 SSH/SFTP session의 remote home에서 시작; `root_hex`와 상호 배타; `/` 허용 |
 | `root_hex` | non-UTF-8 root용 lowercase even-length hex bytes; 첫 byte `2f`; `root`와 상호 배타 |
 | `read_only` | 기본 `false` |
 
@@ -80,8 +83,20 @@ S0 schema는 timeout과 `remote.locations`까지만 추가한다. S3-01 migratio
 - username, password, private key/path, passphrase, port, `HostName`, `ProxyJump`,
   `ProxyCommand` 필드는 unknown-field 오류다.
 - 오류에는 파일과 `remote.locations[index].field`를 표시한다.
-- 등록/편집/삭제는 Mdir4 설정만 원자적으로 바꾸며 `.ssh/config`, key, agent,
-  `known_hosts`를 수정하지 않는다.
+- override 등록/편집/삭제는 Mdir4 설정만 원자적으로 바꾸며 `.ssh/config`, key, agent,
+  `known_hosts`를 수정하지 않는다. `.ssh/config`의 발견 alias 자체는 자동 등록 또는 수정하지
+  않는다.
+
+### OpenSSH alias discovery
+
+- 기본 discovery source는 `~/.ssh/config`와 그 `Include` 파일이다. 앱은 사용자의 home SSH
+  파일을 수정하지 않는다.
+- literal `Host` alias만 후보로 반환한다. `Host *`, wildcard (`*`, `?`)와 negated pattern
+  (`!name`)은 접속 대상으로 표시하지 않는다.
+- parser가 UI/model에 반환하는 값은 alias와 안전한 source diagnostic뿐이다. `HostName`, User,
+  Port, IdentityFile, ProxyJump, ProxyCommand 및 resolved endpoint는 해석·저장·표시하지 않는다.
+- `Include` cycle, 읽기 오류 또는 한 파일의 parse 오류는 다른 alias discovery를 중단시키지
+  않고 사용자에게 안전한 diagnostic으로 표시한다.
 
 ## 3. 인증과 보안
 
@@ -127,9 +142,11 @@ PROD:/var/www [RO]
   `Locations` command가 같은 Location picker를 연다. Viewer/Dialog 안의 F3 의미도 각
   context keymap이 결정한다.
 - 화면과 Help는 같은 CommandRegistry definition에서 키 label을 생성한다.
-- picker는 Local과 **등록된** Remote만 표시한다. 발견된 SSH Host는 S3의 별도
-  `Discover SSH Hosts` 화면에 표시하며 자동 등록하지 않는다.
-- Up/Down, Enter, Esc를 지원한다. Remote Enter는 비동기 connect/load를 시작한다.
+- picker는 Local과 `.ssh/config`에서 발견한 literal SSH Host alias를 표시한다. alias별
+  `remote.locations` override가 있으면 그 display name/root/read-only를 사용하고, 없으면 alias
+  자체를 display name으로 사용해 remote home에서 시작한다.
+- Up/Down, Enter, Esc를 지원한다. Remote Enter는 비동기 connect/load를 시작한다. 사용자는
+  접속 전에 별도 등록 form을 거칠 필요가 없다.
 - Location 전환 시 현재 marks를 비운다. stable id 기반 cursor/cache 복원은 S3부터다.
 
 ## 6. 탐색, metadata, Viewer
