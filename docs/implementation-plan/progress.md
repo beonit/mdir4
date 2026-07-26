@@ -225,6 +225,8 @@
   - Linux 검증: Ubuntu 26.04 arm64 Lima VM, rustc/cargo 1.97.1, fmt/Clippy/93 tests/release 성공
   - artifact-only smoke: Linux/macOS ZIP을 새 임시 디렉터리에 풀어 directory load,
     Ctrl+Q/Enter 정상 종료와 terminal restoration 성공
+  - R1-02 진행: macOS 고정 ZIP으로 한글/긴 경로와 10,000개 파일(`Items 10001`)을
+    adaptive multi-column 화면에서 로드·확인
   - 고정 hash: macOS ZIP `f35d2956...34840f`, Linux ZIP `bf9b6685...7664b2`
   - 상태: 완료; source commit `ee73764`
 - [ ] R1-02 고정 RC Linux/macOS 실제 환경 수동 시험
