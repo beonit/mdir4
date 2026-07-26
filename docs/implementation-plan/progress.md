@@ -241,7 +241,8 @@
   - 긴 트리에서 선택 항목과 스크롤 위치가 안정적으로 따라오는지 재현·검토한다.
   - visible window, 페이지 이동, 검색/재검색 후 cursor 유지, 비동기 child load 중 viewport 보존을 다룬다.
   - 구현: 선택 기반 visible window, PageUp/PageDown, 전체 화면 Clear, 고정 header/body/footer,
-    올바른 `├─`/`└─` connector와 범위 표시, 현재 디렉터리를 MCD root/첫 선택으로 사용.
+    올바른 `├─`/`└─` connector와 범위 표시. filesystem root부터 현재 디렉터리까지 ancestor
+    chain을 순차 로드·펼치고 현재 디렉터리를 첫 선택으로 사용.
   - 검증: MCD가 main 파일/metadata/footer를 남기지 않는 render test, 전체 51 lib tests 및
     전체 회귀 게이트 통과.
 - [ ] M4+ EDIT-01 외부 `$EDITOR` 연결 화면

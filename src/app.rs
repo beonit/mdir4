@@ -901,13 +901,19 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             });
         }
         Action::ShowMcd => {
-            let root_path = state.current_path.clone();
+            let root_path = state
+                .current_path
+                .ancestors()
+                .last()
+                .unwrap_or(&state.current_path)
+                .to_path_buf();
             let mut tree = crate::mcd::tree::DirectoryTree::default();
             let root = tree.add_root(root_path.clone());
             for path in &state.persisted_config.mcd_history {
                 tree.remember(path.clone());
             }
-            tree.expand();
+            tree.reveal_path(&state.current_path);
+            tree.set_loading(root);
             state.mcd = Some(tree);
             state.screen = Screen::Mcd;
             return vec![Effect::LoadMcdChildren {
@@ -917,11 +923,23 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
         Action::McdLoaded { node, result } => {
             if let Some(tree) = &mut state.mcd {
-                match result {
-                    Ok(children) => tree.set_children(node, children),
-                    Err(error) => tree.set_error(node, error.to_string()),
-                }
+                let loaded = match result {
+                    Ok(children) => {
+                        tree.set_children(node, children);
+                        true
+                    }
+                    Err(error) => {
+                        tree.set_error(node, error.to_string());
+                        false
+                    }
+                };
                 tree.expand_ancestors(&state.current_path);
+                if loaded
+                    && let Some((next, path)) = tree.next_unloaded_on_path(&state.current_path)
+                {
+                    tree.set_loading(next);
+                    return vec![Effect::LoadMcdChildren { node: next, path }];
+                }
             }
         }
         Action::McdMove(delta) => {
@@ -949,10 +967,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                             | crate::mcd::tree::LoadState::Error(_)
                     )
                 {
-                    return vec![Effect::LoadMcdChildren {
-                        node: node.id,
-                        path: node.path.clone(),
-                    }];
+                    let id = node.id;
+                    let path = node.path.clone();
+                    tree.set_loading(id);
+                    return vec![Effect::LoadMcdChildren { node: id, path }];
                 }
             }
         }
@@ -1430,10 +1448,14 @@ mod tests {
         assert_eq!(app.screen, Screen::Mcd);
         assert_eq!(tree.selected_node().unwrap().path, app.current_path);
         assert_eq!(
+            tree.visible_rows().first().unwrap().id,
+            crate::mcd::tree::NodeId(1)
+        );
+        assert_eq!(
             effects,
             vec![Effect::LoadMcdChildren {
-                node: tree.selected_node().unwrap().id,
-                path: app.current_path.clone(),
+                node: crate::mcd::tree::NodeId(1),
+                path: PathBuf::from("/"),
             }]
         );
     }

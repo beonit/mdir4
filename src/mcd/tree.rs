@@ -74,6 +74,9 @@ impl DirectoryTree {
     pub fn node(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(&id)
     }
+    pub fn node_for_path(&self, path: &Path) -> Option<&Node> {
+        self.by_path.get(path).and_then(|id| self.nodes.get(id))
+    }
     pub fn selected_node(&self) -> Option<&Node> {
         self.visible_rows()
             .get(self.selected)
@@ -97,6 +100,45 @@ impl DirectoryTree {
         {
             self.selected = index;
         }
+    }
+
+    pub fn reveal_path(&mut self, path: &Path) -> Option<NodeId> {
+        let mut parent = None;
+        let mut selected = None;
+        for ancestor in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
+            let id = self
+                .by_path
+                .get(ancestor)
+                .copied()
+                .unwrap_or_else(|| self.add(ancestor.to_path_buf(), parent));
+            if let Some(parent_id) = parent
+                && let Some(parent_node) = self.nodes.get_mut(&parent_id)
+                && !parent_node.children.contains(&id)
+            {
+                parent_node.children.push(id);
+            }
+            if let Some(node) = self.nodes.get_mut(&id) {
+                node.expanded = true;
+            }
+            parent = Some(id);
+            selected = Some(id);
+        }
+        if let Some(id) = selected
+            && let Some(index) = self.visible_rows().iter().position(|row| row.id == id)
+        {
+            self.selected = index;
+        }
+        selected
+    }
+
+    pub fn next_unloaded_on_path(&self, path: &Path) -> Option<(NodeId, PathBuf)> {
+        path.ancestors()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .filter_map(|ancestor| self.node_for_path(ancestor))
+            .find(|node| matches!(node.state, LoadState::Unloaded | LoadState::Error(_)))
+            .map(|node| (node.id, node.path.clone()))
     }
 
     pub fn toggle(&mut self) {
@@ -292,6 +334,31 @@ mod tests {
         assert_eq!(tree.selected, 5);
         tree.page_move(-99, 5);
         assert_eq!(tree.selected, 0);
+    }
+
+    #[test]
+    fn reveal_path_builds_and_selects_the_expanded_ancestor_chain() {
+        let mut tree = DirectoryTree::default();
+        tree.add_root(PathBuf::from("/"));
+
+        let selected = tree.reveal_path(Path::new("/Users/me/project")).unwrap();
+        let paths: Vec<_> = tree
+            .visible_rows()
+            .iter()
+            .map(|row| tree.node(row.id).unwrap().path.clone())
+            .collect();
+
+        assert_eq!(
+            paths,
+            ["/", "/Users", "/Users/me", "/Users/me/project"].map(PathBuf::from)
+        );
+        assert_eq!(tree.selected_node().unwrap().id, selected);
+        assert_eq!(
+            tree.next_unloaded_on_path(Path::new("/Users/me/project"))
+                .unwrap()
+                .1,
+            PathBuf::from("/")
+        );
     }
 
     #[test]
