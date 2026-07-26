@@ -901,12 +901,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             });
         }
         Action::ShowMcd => {
-            let root_path = state
-                .current_path
-                .ancestors()
-                .last()
-                .unwrap_or(&state.current_path)
-                .to_path_buf();
+            let root_path = state.current_path.clone();
             let mut tree = crate::mcd::tree::DirectoryTree::default();
             let root = tree.add_root(root_path.clone());
             for path in &state.persisted_config.mcd_history {
@@ -1421,6 +1416,25 @@ mod tests {
         assert_eq!(
             effects,
             vec![Effect::LoadDirectory(PathBuf::from("/test/a"))]
+        );
+    }
+
+    #[test]
+    fn mcd_starts_at_the_current_directory() {
+        let mut app = state();
+        app.current_path = PathBuf::from("/test/work/한글");
+
+        let effects = reduce(&mut app, Action::ShowMcd);
+
+        let tree = app.mcd.as_ref().unwrap();
+        assert_eq!(app.screen, Screen::Mcd);
+        assert_eq!(tree.selected_node().unwrap().path, app.current_path);
+        assert_eq!(
+            effects,
+            vec![Effect::LoadMcdChildren {
+                node: tree.selected_node().unwrap().id,
+                path: app.current_path.clone(),
+            }]
         );
     }
 
