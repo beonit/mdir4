@@ -448,7 +448,7 @@ coalesce하고 나머지는 UI를 block하지 않고 `Busy`다. Git/Remote는 �
 ## 10. 의존성 정책
 
 의존성은 해당 카드에서 실제 필요할 때만 추가한다. 표준 라이브러리 대안, 유지 상태,
-라이선스, Windows 지원과 binary 영향을 확인하고 이유를 `progress.md`에 기록한다.
+라이선스, Linux/macOS 지원과 binary 영향을 확인하고 이유를 `progress.md`에 기록한다.
 `Cargo.lock`을 재현 기준으로 사용한다.
 
 | 범주 | 목적 |
@@ -458,7 +458,7 @@ coalesce하고 나머지는 UI를 block하지 않고 `Busy`다. Git/Remote는 �
 | unicode-width, unicode-segmentation | cell width와 grapheme |
 | thiserror | 구조화된 오류 |
 | time 계열 | 결정적 날짜 포맷 |
-| trash/Windows API adapter | 휴지통, launcher, drive |
+| platform trash/launcher/mount adapter | 휴지통, launcher, mount |
 | insta, tempfile | snapshot과 격리된 integration test |
 
 <a id="git-extension-boundary"></a>

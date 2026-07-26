@@ -3,6 +3,10 @@
 이 파일은 프로젝트 문서의 단일 진입점이다. 기능 계약, 구현 순서, 후속 확장을 섞어
 읽지 않도록 현재 작업 트랙과 문서 우선순위를 고정한다.
 
+플랫폼 범위는 Linux와 macOS다. Windows는 v1, Git built-in, SSH Remote Drive의 구현·수동
+검증·출시 blocker에 포함하지 않는다. `requirements-original.md`의 Windows 문구는 원본 기록
+보존용이며 현재 제품 계약보다 우선하지 않는다.
+
 ## 1. 현재 작업 순서
 
 ```text
@@ -11,7 +15,7 @@ M0 개발 기반
      └─ M1-13 계약 정합성 보정  완료
          └─ M2 파일 관리        완료
              └─ M3 기능 확장    완료
-                 └─ R1-01 RC 빌드/패키징  다음 작업
+                 └─ R1-01 Linux/macOS RC 빌드/패키징  다음 작업
                      ├─ G0→G1→G2→G3 Git built-in
                      └─ S0→S1→S2→S3 SSH Remote Drive
 ```

@@ -43,11 +43,11 @@ M0-05 → M1-13 ─┬→ M2-01 dialog ───────────┐
 ## M0-01 Rust 도구 체인 설치와 환경 기록
 
 - 선행: 없음
-- 목표: Windows와 개발 머신에서 동일한 stable Rust 기반을 쓴다.
+- 목표: Linux와 macOS에서 동일한 stable Rust 기반을 쓴다.
 - 작업:
   1. 개발 머신에 rustup으로 stable toolchain, rustfmt, clippy를 설치한다.
   2. `rust-toolchain.toml`에 `stable`, `rustfmt`, `clippy`를 선언한다.
-  3. `docs/development.md`에 Windows PowerShell 설치/검증 명령을 기록한다.
+  3. `docs/development.md`에 Linux/macOS 설치/검증 명령을 기록한다.
   4. 실제 `rustc -V`, `cargo -V` 결과를 `progress.md`에 기록한다.
 - 검증: `rustc -V`, `cargo -V`, `cargo fmt --version`, `cargo clippy -V`
 - 완료: 새 셸에서 네 명령이 성공하고 버전이 기록됨.
@@ -72,16 +72,17 @@ M0-05 → M1-13 ─┬→ M2-01 dialog ───────────┐
 ## M0-03 CI 품질 파이프라인
 
 - 선행: M0-02
-- 목표: Linux와 Windows에서 동일한 품질 게이트를 자동 실행한다.
+- 목표: Linux와 macOS에서 동일한 품질 게이트를 자동 실행한다.
 - 파일: `.github/workflows/ci.yml`
 - 작업:
-  1. `ubuntu-latest`, `windows-latest` matrix를 만든다.
+  1. `ubuntu-latest`, `macos-latest` matrix를 만든다.
   2. stable toolchain + rustfmt + clippy를 설치한다.
   3. fmt, clippy `-D warnings`, test를 순서대로 실행한다.
   4. Cargo 캐시는 lockfile 기준으로 사용한다.
   5. snapshot `.snap.new`가 남으면 실패하도록 검사한다.
 - 검증: workflow YAML 구문 확인, 로컬 공통 게이트.
-- 완료: 최초 GitHub 실행에서 두 OS가 모두 성공.
+- 완료: local-only release에서는 로컬 gate가 성공하고 두 OS build job이 정의되면 된다.
+  원격 저장소를 사용할 경우 최초 GitHub 실행 결과를 추가 증거로 기록한다.
 
 ## M0-04 터미널 수명주기와 복구
 
@@ -275,7 +276,7 @@ M0-05 → M1-13 ─┬→ M2-01 dialog ───────────┐
   4. Enter directory/file, Backspace, Ctrl+Q 확인을 구현한다.
   5. ShellExecute 어댑터는 셸 문자열을 만들지 않는다.
 - 테스트: recording backend로 action/effect 순서와 launch path assert.
-- 수동: Windows Terminal에서 탐색/리사이즈/파일 연결 실행.
+- 수동: macOS/Linux 터미널에서 탐색/리사이즈/파일 연결 실행.
 - 완료: 렌더 루프가 대기 중 CPU를 계속 점유하지 않음.
 
 ## M1-12 YAML 시나리오 최소 하네스 기준선
@@ -331,7 +332,7 @@ M0-05 → M1-13 ─┬→ M2-01 dialog ───────────┐
 - 완료: 이 카드가 소유한 자동 항목(ARC-02, UI-03/07/08의 M1 부분, KEY-02/04, THEME-01 자동 부분,
   TEST-03/04/06, PERF-01/02)의 실제 test 이름/상태가 `progress.md` ledger에 연결되고
   미증명 자동 항목이 0개이며 공통 게이트가 모두 성공함. TEST-07 외부 CI와 THEME-01/FS-01/02
-  Windows 수동 부분은 각각 R1-01/R1-02 owner로 ledger에 남기며 M2 진입을 막지 않는다.
+  Linux/macOS 수동 부분은 각각 R1-01/R1-02 owner로 ledger에 남기며 M2 진입을 막지 않는다.
 
 ---
 
@@ -373,7 +374,7 @@ M0-05 → M1-13 ─┬→ M2-01 dialog ───────────┐
   3. 동일 경로, 기존 대상 충돌을 명시.
   4. 성공 후 refresh하고 새 EntryId에 커서를 둔다.
 - 테스트: `CON`, `NUL`, `a:b`, 한글 이름, case-only rename, 권한 오류.
-- 완료: MemoryFS와 Windows tempdir integration test 성공.
+- 완료: MemoryFS와 platform tempdir integration test 성공.
 
 ## M2-04 Viewer 로드·decode 모델
 
@@ -531,7 +532,7 @@ M0-05 → M1-13 ─┬→ M2-01 dialog ───────────┐
   2. rename→edit→copy→move→trash 흐름 시나리오 작성.
   3. 각 작업의 권한 오류/충돌/취소 시나리오 작성.
   4. worker 중 resize/input 시나리오 작성.
-  5. Windows CI integration test는 임시 폴더만 사용.
+  5. Linux/macOS integration test는 임시 폴더만 사용.
   6. M2 built-in dialog/progress/error는 영어이고 Unicode 파일명/사용자 입력은 보존되는지
      snapshot과 state에서 검증한다.
 - 완료: M2 acceptance 항목과 공통 게이트 전부 성공.
@@ -681,30 +682,29 @@ M0-05 → M1-13 ─┬→ M2-01 dialog ───────────┐
 
 ---
 
-# R1 — Windows v1.0 릴리스
+# R1 — Linux/macOS v1.0 릴리스
 
 ## R1-01 릴리스 후보 빌드와 패키징
 
 - 선행: M3 완료
 - 목표: 수동 시험에 사용할 불변 release candidate artifact를 만든다.
 - 작업:
-  1. 공통 게이트와 Windows CI를 성공시킨다.
-  2. `cargo build --release --locked`로 단일 `mdir4.exe`를 만든다.
+  1. 공통 게이트와 Linux/macOS build를 성공시킨다.
+  2. `cargo build --release --locked`로 플랫폼별 단일 `mdir4`를 만든다.
   3. 기본 설정/테마를 내장하고 필수 문서와 license 목록을 묶는다.
   4. [`../releases/v1.0-rc-template.md`](../releases/v1.0-rc-template.md)를 복사해
      `docs/releases/v1.0-rc.md`를 만들고 source commit, `rustc -Vv`, `cargo -V`, target triple,
-     Cargo.lock SHA-256, artifact SHA-256과 CI URL을 기록한다.
-  5. clean Windows VM에서 artifact만으로 시작되는지 smoke 확인한다.
-- 외부 대기 해소: 이 카드의 ubuntu/windows CI 링크를 M0-03 증거에도 연결해 M0-03을 닫는다.
+     Cargo.lock SHA-256, artifact SHA-256과 build 환경을 기록한다.
+  5. clean Linux/macOS 환경에서 artifact만으로 시작되는지 smoke 확인한다.
+- 원격 CI는 선택 사항이다. local-only release이면 build 명령과 환경을 증거로 기록한다.
 - 완료: 이후 수동 시험 대상의 hash가 고정되고 개발 머신 절대 경로가 노출되지 않음.
 
-## R1-02 고정 RC Windows 실제 환경 수동 시험
+## R1-02 고정 RC Linux/macOS 실제 환경 수동 시험
 
 - 선행: R1-01
-- 목표: R1-01에서 고정한 동일 SHA-256 artifact를 Windows 조합에서 확인한다.
+- 목표: R1-01에서 고정한 플랫폼별 SHA-256 artifact를 Linux/macOS에서 확인한다.
 - 체크:
-  - Windows 10/11 각각에서 Windows Terminal의 PowerShell profile, standalone PowerShell
-    console host, standalone CMD console host(총 6행)
+  - Linux 일반 터미널과 macOS Terminal/iTerm 계열
   - 시작/종료/패닉 복구
   - drive/UNC/긴 경로/한글 경로
   - 연결 프로그램 실행
@@ -719,7 +719,7 @@ M0-05 → M1-13 ─┬→ M2-01 dialog ───────────┐
 - 선행: R1-02
 - 목표: 문서, 자동 테스트, 수동 시험, 패키지를 한 번에 승인한다.
 - 작업:
-  1. 공통 게이트와 Windows CI 재실행.
+  1. 공통 게이트와 Linux/macOS release build 재실행.
   2. `.snap.new`, ignored failing test, TODO acceptance가 없는지 검사.
   3. acceptance matrix 모든 v1 ID를 `progress.md` evidence ledger와
      `docs/releases/v1.0-rc.md`의

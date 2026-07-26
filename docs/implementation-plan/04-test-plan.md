@@ -18,7 +18,7 @@
 | Component | UI component→Buffer | `tests/ui_*.rs` | TestBackend |
 | Scenario | key sequence→state/snapshot | `tests/scenarios.rs` | Memory ports |
 | Integration | RealFileSystem/atomic save/작업 | `tests/file_operations.rs` | TempDir만 |
-| Platform | ShellExecute/drive/trash | `#[cfg(windows)]` tests | Windows temp data |
+| Platform | launcher/mount/trash | platform adapter tests | Linux/macOS temp data |
 | Manual | 실제 terminal/휴지통/UNC | release checklist | 명시된 test data |
 
 ## 3. 현재 M1 테스트 하네스 기준선
@@ -287,8 +287,8 @@ snapshot CLI를 채택하면 추가:
 cargo insta test --all-features --check --locked
 ```
 
-Windows 전용 test는 `#[cfg(windows)]`로 두되 Windows CI에서 실행 횟수가 0이 아닌지
-별도 test 이름 또는 로그로 확인한다.
+플랫폼 전용 test는 명확한 `cfg` 경계에 두고 Linux/macOS build에서 해당 adapter가
+컴파일되고 실행되는지 별도 test 이름 또는 로그로 확인한다.
 
 ## 13. v1 이후 Git built-in 테스트
 

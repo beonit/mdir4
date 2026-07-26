@@ -1,5 +1,8 @@
 # Mdir4 SSH Remote / Remote Drive 계획
 
+플랫폼 범위는 Linux/macOS다. 하위 문서에 남은 Windows 수동 검증 표현은 원본 계획 기록이며
+Linux/macOS 동등 검증으로 해석하고 Windows 결과를 완료 조건으로 요구하지 않는다.
+
 이 폴더는 SSH/SFTP 파일 시스템을 Core의 새로운 `Location` 유형으로 추가하는 v1 이후
 로드맵이다. 별도 FTP 클라이언트나 범용 plugin 계획이 아니다. 사용자는 Local drive와
 등록된 Remote를 같은 Location picker에서 선택하고 같은 목록 UX로 탐색한다.

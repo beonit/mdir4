@@ -6,20 +6,20 @@
 
 | ID | 수용 기준 | 단계/카드 | 자동 검증 | 수동 검증 |
 |---|---|---|---|---|
-| ENV-01 | Windows 10/11 단일 exe 실행 | R1-01~03 | Windows release build | 두 OS 실행 |
-| ENV-02 | 각 OS에서 Windows Terminal/PowerShell profile, standalone PowerShell, standalone CMD 정상 | R1-02 | 해당 없음 | 2 OS × 3 host checklist |
+| ENV-01 | Linux/macOS 단일 실행 파일 실행 | R1-01~03 | 플랫폼별 release build | 두 OS 실행 |
+| ENV-02 | Linux 일반 터미널과 macOS Terminal/iTerm 계열 정상 | R1-02 | 해당 없음 | 플랫폼별 terminal checklist |
 | ARC-01 | 키 이벤트가 UI를 직접 변경하지 않음 | M1-01,09,11 | reducer/input dependency test | 없음 |
 | ARC-02 | 렌더 중 OS/FS 호출 없음 | M1-10,13 | recording ports call count | 없음 |
 | ARC-03 | 실제/Test FS 교체 가능 | M1-04,05 | 동일 contract tests | 없음 |
 | ARC-04 | Core Local queue가 bounded/non-blocking이고 full coalesce/Busy가 결정적 | M2-09 | injected-capacity backpressure | 없음 |
-| UI-01 | 80×25 정상 표시 | M1-03,10 | golden snapshot | Windows 확인 |
+| UI-01 | 80×25 정상 표시 | M1-03,10 | golden snapshot | Linux/macOS 확인 |
 | UI-02 | 60×15 미만 안전 안내 | M1-03,10 | boundary snapshot | 없음 |
 | UI-03 | 현재 경로 전체 내부 유지/화면 축약 | M1-02,10 | Unicode/long path snapshot | 없음 |
 | UI-04 | Short View 1~6 컬럼 | M1-03,10 | mode matrix | 없음 |
 | UI-05 | Auto 폭 최대 80→3, 120→4, 160→5; 항목 수에 따라 1열부터 적응 | M1-03 | exact/adaptive unit tests | 없음 |
 | UI-06 | Long View 전환과 선택 유지 | M3-03 | scenario+snapshot | 없음 |
 | UI-07 | 40셀 이상 Short View가 OS-local `MM-DD HH:mm`, unavailable fallback과 R/H/S/A를 결정적으로 표시 | M1-13 | fixed-timezone metadata snapshot | 없음 |
-| UI-08 | built-in UI 문구는 영어이고 파일명/경로/사용자 입력은 원문을 보존 | M1-13,M2-14,M3-10 | message/snapshot matrix | Windows walkthrough |
+| UI-08 | built-in UI 문구는 영어이고 파일명/경로/사용자 입력은 원문을 보존 | M1-13,M2-14,M3-10 | message/snapshot matrix | Linux/macOS walkthrough |
 | NAV-01 | 세로 우선 배치 | M1-03,06 | index mapping tests | 없음 |
 | NAV-02 | 상하좌우 공간 탐색 | M1-06 | navigation table | 키 감각 확인 |
 | NAV-03 | 마지막 컬럼 Nearest | M1-06 | B3→C2 test | 없음 |
@@ -39,18 +39,18 @@
 | THEME-03 | 외부 theme 무재빌드 적용 | M3-04 | load scenario | 파일 교체 확인 |
 | FS-01 | Enter 디렉터리/파일 실행 | M1-11 | recording launcher | ShellExecute |
 | FS-02 | Backspace 상위 이동 | M1-11 | scenario | drive/UNC root |
-| FS-03 | Rename Unicode/검증 | M2-03 | unit+tempdir | Windows 예약명 |
+| FS-03 | Rename Unicode/검증 | M2-03 | unit+tempdir | Linux/macOS 파일명 |
 | FS-04 | MkDir | M2-03 | unit+tempdir | 없음 |
 | FS-05 | Viewer 텍스트 탐색/검색 | M2-04,05 | state+snapshot | 큰 파일 감각 |
 | FS-06 | 기본 Editor 기능 | M2-06,07 | buffer+save tests | 입력 감각 |
 | FS-07 | Copy 충돌 6종/진행률 | M2-08~10 | fault scenarios | 큰 파일 |
 | FS-08 | Move와 cross-volume fallback | M2-11 | mocked device test | 실제 드라이브 |
-| FS-09 | Delete 기본 휴지통 | M2-12 | RecordingTrash | Windows 휴지통 |
+| FS-09 | Delete 기본 휴지통 | M2-12 | RecordingTrash | Linux/macOS 휴지통 |
 | FS-10 | 영구 삭제 별도 확인 | M2-12 | tempdir safety tests | 경고 문구 |
 | FS-11 | 작업 중 UI 응답 | M2-09,14 | slow worker scenario | 큰 파일+resize |
 | VIEW-01 | Name/Ext/Size/Date/Time의 exact comparator, missing-last, stable tie-break | M2-13 | full sort table | 없음 |
 | VIEW-02 | Directories First | M1-05,M2-13 | sort tests | 없음 |
-| VIEW-03 | show_hidden=true 기본, H 토글과 선택 fallback | M2-13 | Windows attr/filter tests | Windows 확인 |
+| VIEW-03 | show_hidden=true 기본, H 토글과 선택 fallback | M2-13 | attr/filter tests | Linux/macOS 확인 |
 | VIEW-04 | Main S/Ctrl+S/H/D command와 Help, Editor Ctrl+S context가 단일 Registry 계약을 지킴 | M2-13 | command/context scenarios | 키 감각 확인 |
 | MCD-01 | 트리 이동/지연 로드 | M3-05,06 | tree tests+scenario | reference 비교 |
 | MCD-02 | 검색/최근 경로 | M3-05,06 | filter tests | 없음 |
@@ -66,7 +66,7 @@
 | TEST-04 | 80/100/120/160 크기 | M1-13 | snapshot matrix | 없음 |
 | TEST-05 | 0~10,000 항목 경계 | M1-06,12 | boundary tests | 없음 |
 | TEST-06 | 문자와 스타일을 통합 snapshot 검사 | M1-13 | style-aware serializer | 없음 |
-| TEST-07 | 실제 terminal 없는 CI | M0-03 | ubuntu/windows CI | 없음 |
+| TEST-07 | 실제 terminal 없는 자동 gate | M0-03 | Linux/macOS build 또는 CI | 없음 |
 | PERF-01 | key→map→reduce→render 50 ms 목표 | M1-13 | ignored release smoke | 체감 확인 |
 | PERF-02 | 10,000개 sort+layout+render 100 ms 목표 | M1-13 | ignored release smoke | 없음 |
 
@@ -102,8 +102,7 @@
 
 다음 항목은 v1.0 최종 승인에는 필요하지만 `M1-13` 완료 조건이 아니다.
 
-- TEST-07: workflow는 로컬 검증됐지만 GitHub ubuntu/windows 최초 실행은 외부 대기이며
-  `R1-01`이 CI URL을 연결한다.
+- TEST-07: 원격 CI는 선택 사항이며 local-only release는 플랫폼별 build/test 로그를 연결한다.
 - THEME-01 참고 이미지 비교, FS-01 실제 ShellExecute, FS-02 drive/UNC와 terminal 조합은
   `R1-02`의 동일 hash RC 수동 증거로 남는다.
 

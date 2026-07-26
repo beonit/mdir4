@@ -19,7 +19,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-          - windows-latest
+          - macos-latest
 
     steps:
       - name: Check out repository
@@ -53,9 +53,15 @@ jobs:
           fi
 
   release-candidate:
-    name: Windows release candidate
-    runs-on: windows-latest
+    name: Release candidate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
 
     steps:
       - name: Check out repository
@@ -67,35 +73,34 @@ jobs:
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Set native package target
+        shell: bash
+        run: echo "PACKAGE_TARGET=$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)" >> "$GITHUB_ENV"
+
       - name: Build locked release binary
         run: cargo build --release --locked
 
       - name: Package release candidate
         run: >-
-          python scripts/package_release.py
-          --binary target/release/mdir4.exe
-          --target windows-x86_64
+          python3 scripts/package_release.py
+          --binary target/release/mdir4
+          --target ${{ env.PACKAGE_TARGET }}
 
       - name: Verify package contains no workspace path
-        shell: pwsh
-        run: |
-          $workspace = [Regex]::Escape($env:GITHUB_WORKSPACE)
-          Expand-Archive dist/mdir4-v0.1.0-windows-x86_64.zip -DestinationPath package-check
-          Get-ChildItem package-check -Recurse -File | ForEach-Object {
-            if (-not $_.Name.EndsWith('.exe')) {
-              $content = Get-Content $_.FullName -Raw
-              if ($content -match $workspace) {
-                throw "Workspace path leaked into $($_.FullName)"
-              }
-            }
-          }
+        shell: bash
+        run: >-
+          if unzip -p dist/mdir4-v0.1.0-${{ env.PACKAGE_TARGET }}.zip
+          | grep -F "$GITHUB_WORKSPACE"; then
+            echo "Workspace path leaked into package";
+            exit 1;
+          fi
 
       - name: Upload immutable candidate
         uses: actions/upload-artifact@v7
         with:
-          name: mdir4-v0.1.0-windows-x86_64
+          name: mdir4-v0.1.0-${{ env.PACKAGE_TARGET }}
           path: |
-            dist/mdir4-v0.1.0-windows-x86_64.zip
+            dist/mdir4-v0.1.0-${{ env.PACKAGE_TARGET }}.zip
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 30

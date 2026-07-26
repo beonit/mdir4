@@ -40,11 +40,11 @@ SSH Remote/Remote Drive 계획은 [`../remote/README.md`](../remote/README.md)�
 
 ## 프로젝트 분류와 제약
 
-- 제품 유형: 로컬 단일 사용자 Windows TUI
-- 첫 배포: Windows 10/11 단일 실행 파일
+- 제품 유형: 로컬 단일 사용자 Linux/macOS TUI
+- 첫 배포: Linux 및 macOS native architecture 단일 실행 파일
 - 구조: 단일 Cargo 패키지의 모듈형 모놀리스
 - 핵심 제약: 80×25, 키보드 전용 조작, 결정적 TestBackend 렌더링
-- 장기 확장: Linux/macOS이지만 v1에서는 Windows 동작을 우선한다.
+- Windows는 v1 지원·검증 범위에 포함하지 않는다.
 - 현재 환경: Rust stable 1.97.1 도구 체인과 Cargo/rustfmt/Clippy가 설치되어 있다.
 - v1 범위 밖: 2패널, 압축 탐색, SFTP/SSH, Git 통합, 범용/외부 플러그인,
   내장 터미널, Hex Viewer
@@ -62,7 +62,7 @@ M0~M3를 모두 끝낸 `v1.0`으로 정의한다.
 | M1 | 화면 및 탐색 | 실제 디렉터리를 80×25에서 탐색하고 스냅샷 통과 |
 | M2 | 파일 관리 | Rename/View/Edit/Copy/Move/MkDir/Delete가 테스트 더블과 실제 임시 폴더에서 동작 |
 | M3 | Mdir 확장 | MCD/QCD/Menu/Long View/설정/사용자 키맵·테마 |
-| R1 | v1.0 릴리스 | Windows 빌드, 전체 수용 기준, 문서와 패키징 완료 |
+| R1 | v1.0 릴리스 | Linux/macOS 빌드, 전체 수용 기준, 문서와 패키징 완료 |
 | G0 | 내장 확장 기반 | 일반화된 최소 Plugin API, Manager, 설정, 격리 테스트 |
 | G1 | 읽기 전용 Git | 저장소/브랜치/상태/Diff를 비동기로 표시 |
 | G2 | 로컬 Git 작업 | Stage/Commit/Log/Branch/Stash/Discard 안전 처리 |

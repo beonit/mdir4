@@ -1,5 +1,8 @@
 # Mdir4 Git built-in 확장 계획
 
+플랫폼 범위는 Linux/macOS다. 하위 문서에 남은 Windows 수동 검증 표현은 과거 계획 기록이며
+Linux/macOS 동등 검증으로 해석하고 Windows 결과를 완료 조건으로 요구하지 않는다.
+
 이 폴더는 사용자 제공 Git 계획을 Mdir4의 v1 이후 실행 트랙으로 재정렬한 문서 묶음이다.
 아직 Git production 구현은 시작하지 않는다. v1 `R1`이 끝난 뒤 `G0 → G1 → G2 → G3`
 순서로 진행한다.

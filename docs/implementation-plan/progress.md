@@ -5,7 +5,7 @@
 ## 현재 기준선
 
 - 브랜치: `main`
-- Git 커밋: 아직 없음
+- Git 커밋: `760a90f` 최초 기준선
 - Rust 도구 체인: stable 1.97.1 설치됨
 - 코드: 기본 디렉터리 탐색이 가능한 Rust/Ratatui 애플리케이션
 - 문서: 원본 요구사항, 요구사항 검토, UI 참고 이미지, 구현 계획 작성됨
@@ -21,11 +21,11 @@
 
 | 트랙 | 상태 | 다음 조건/카드 |
 |---|---|---|
-| M0 | 로컬 기준선 완료/외부 CI 대기 | M0-03 GitHub ubuntu/windows 증거 |
+| M0 | 로컬 기준선 완료 | Linux build 증거는 R1-01에서 추가 |
 | M1 | 완료 | M2 인계 완료 |
 | M2 | 완료 | M3 인계 완료 |
 | M3 | 완료 | R1-01 |
-| R1 | 진행/외부 대기 | R1-01 source commit + GitHub Windows artifact 고정 |
+| R1 | 진행 | R1-01 Linux artifact와 scope-update commit 고정 |
 | Git G0~G3 | 계획 완료, 구현 미착수 | R1 후 G0-01 |
 | SSH Remote S0~S3 | 계획 완료, 구현 미착수 | R1 후 S0-00 |
 
@@ -36,7 +36,7 @@
   - 변경: `rust-toolchain.toml`, `docs/development.md`
   - 검증: 로그인 zsh에서 rustup/rustc/cargo/rustfmt/clippy 버전 확인
   - 증거: rustc 1.97.1, cargo 1.97.1, stable-aarch64-apple-darwin
-  - 남은 위험: Windows MSVC toolchain은 R1-01 RC build와 R1-02 실제 환경에서 검증
+  - 남은 위험: Linux toolchain은 R1-01 build 환경에서 검증
 - [x] M0-02 Cargo 패키지와 최소 모듈 생성
   - 완료일: 2026-07-24
   - 변경: `Cargo.toml`, `Cargo.lock`, `src/main.rs`, `src/lib.rs`, `.gitignore`
@@ -45,12 +45,12 @@
   - 결정: pre-v1은 rolling stable이며 `package.rust-version`/MSRV와 placeholder
     `crate_builds()`를 약속하지 않음; R1-01이 RC compiler version 기록
   - 남은 위험: dependency별 MSRV 약속은 v1 이후 별도 audit 전 미정
-- [ ] M0-03 CI 품질 파이프라인
+- [x] M0-03 품질 파이프라인
   - 구현일: 2026-07-25
   - 변경: `.github/workflows/ci.yml`
   - 로컬 검증: workflow YAML, Bash snapshot 검사, fmt/clippy/test `--locked` 성공
-  - 남은 조건: GitHub 원격 저장소에 push한 뒤 ubuntu/windows 최초 실행 성공 확인
-  - 상태: 구현 완료, 외부 CI 실행 대기
+  - 결정: local-only release이므로 push/원격 CI URL은 완료 조건에서 제외
+  - 상태: 로컬 gate 성공, Linux/macOS workflow 정의 완료
 - [x] M0-04 터미널 수명주기와 복구
   - 완료일: 2026-07-25
   - 변경: `src/runtime.rs`
@@ -192,7 +192,7 @@
   UI↔worker conflict round-trip을 구현했다.
 - Copy 충돌 6종, cross-device Move, 외부 저장 충돌, atomic replace, 보호 삭제를 자동 검증했다.
 - 공통 게이트: fmt, Clippy `-D warnings`, 전체 81 tests 성공.
-- Windows 실제 Trash/drive/예약명 수동 감각은 R1-02가 소유한다.
+- Linux/macOS 실제 Trash/mount/파일명 수동 감각은 R1-02가 소유한다.
 
 ## M3
 
@@ -213,19 +213,18 @@
 - Short/Long View, 내장·외부 테마, MCD 비동기 트리, QCD CRUD/재정렬을 연결했다.
 - F12 메뉴와 Help가 Command Registry를 공유하고, 설정 화면은 preview/apply/cancel을 지원한다.
 - 공통 게이트: fmt, Clippy `-D warnings`, 전체 93 tests 성공.
-- Windows 실제 터미널·파일시스템 감각 검증은 고정 RC를 만든 뒤 R1-02가 소유한다.
+- Linux/macOS 실제 터미널·파일시스템 감각 검증은 고정 RC를 만든 뒤 R1-02가 소유한다.
 
 ## R1
 
 - [ ] R1-01 릴리스 후보 빌드와 패키징
   - 구현일: 2026-07-25
   - 변경: release profile, cross-platform packager, dependency license inventory,
-    Windows artifact CI job, RC record
+    Linux/macOS artifact build job, RC record
   - 로컬 검증: locked release build, macOS arm64 ZIP 구성과 SHA-256, 공통 93-test gate 성공
-  - 남은 조건: 사용자 승인 source commit, GitHub ubuntu/windows CI URL, Windows EXE/ZIP hash 고정,
-    clean Windows artifact-only smoke
-  - 상태: 로컬 구현 완료, immutable candidate 생성 외부 대기
-- [ ] R1-02 고정 RC Windows 실제 환경 수동 시험
+  - 남은 조건: Linux binary/ZIP hash 고정, scope-update commit, Linux artifact-only smoke
+  - 상태: macOS artifact 검증 완료, Linux artifact 대기
+- [ ] R1-02 고정 RC Linux/macOS 실제 환경 수동 시험
 - [ ] R1-03 v1.0 최종 게이트
 
 ## v1 이후 Git built-in
@@ -258,7 +257,7 @@
 M1~M3 기능은 사용 가능하고 현재 93-test 회귀 기준선이 있다. 첫 commit은
 사용자 승인 전 만들지 않았으며 다음 구현 순서는 `R1-01`이다.
 `M0-03` workflow는 로컬 검증됐지만 GitHub 원격 실행 증거가 없어 외부 대기 상태다.
-Windows 실제 ShellExecute와 terminal 조합 증거는 고정 RC를 만든 뒤 R1-02에서 기록한다.
+Linux/macOS launcher와 terminal 조합 증거는 고정 RC를 만든 뒤 R1-02에서 기록한다.
 Git built-in과 SSH Remote 계획은 문서만 추가했으며 현재 v1 순서를 바꾸지 않는다.
 
 ## 사용자 검토 권장 결정
@@ -299,12 +298,12 @@ evidence로 펼친다.
 | KEY-05 | 부분검증 | Registry의 R/Refresh→Reload와 snapshots 있음; M1-13 전용 reducer scenario 및 hardcoded hint 제거 |
 | THEME-01 | 부분검증 | M1-13 style snapshot; R1-02 수동 reference 비교 |
 | THEME-02 | 자동검증 | file-role style table tests |
-| FS-01,02 | 부분검증 | launcher/parent 자동; R1-02 Windows/drive/UNC 수동 남음 |
+| FS-01,02 | 부분검증 | launcher/parent 자동; R1-02 Linux/macOS mount 수동 남음 |
 | TEST-01,02,05 | 자동검증 | 현재 93-test 기준선 |
 | TEST-03 | 부분검증 | 4 YAML flows; M1-13 FixedClock/named completion/assert 남음 |
 | TEST-04,06, PERF-01 | 미착수 | M1-13 snapshot matrix/style serializer/release smoke |
 | PERF-02 | 부분검증 | debug End/Home/layout/render만 존재; M1-13 full release smoke |
-| TEST-07 | 외부대기 | R1-01이 M0-03 GitHub ubuntu/windows 최초 실행 URL 연결 |
+| TEST-07 | 부분검증 | macOS local no-terminal gate 성공; R1-01 Linux build 로그 추가 |
 | UI-06, KEY-03, FS-03~11, VIEW-01~04 | 자동검증 | M2 reducer/worker/tempdir/MemoryFS/sort/Trash tests |
 | THEME-03 | 자동검증 | 내장 테마와 외부 TOML 상속/검증 tests |
 | MCD-01~03, QCD-01, MENU-01, CFG-01~03 | 자동검증 | M3 model/reducer/render/config tests |

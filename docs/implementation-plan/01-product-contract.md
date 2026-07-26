@@ -7,8 +7,7 @@
 
 ### 포함
 
-- Windows 10/11에서 Windows Terminal의 PowerShell profile, standalone PowerShell console
-  host, standalone CMD console host로 실행
+- Linux의 일반 터미널과 macOS Terminal/iTerm 계열에서 실행
 - Short/Long View
 - 세로 우선 멀티 컬럼
 - 공간적 상·하·좌·우 탐색과 페이지 탐색
@@ -18,7 +17,7 @@
 - Classic Mdir 기본 테마와 외부 TOML 테마
 - TOML 설정 저장과 사용자 키맵
 - TestBackend, 단위/시나리오/스냅샷 테스트
-- Windows 단일 `.exe` 배포
+- Linux/macOS 단일 실행 파일 배포
 
 ### 제외
 
@@ -200,7 +199,7 @@ row        = local % rows_per_column
   않는다.
 - H가 off로 바꾸면 `hidden=true` entry만 제외하고 `..`는 유지한다. filter/sort/drive 전환 뒤
   같은 EntryId를 찾고, 없으면 이전 visual index에 가장 가까운 항목으로 이동한다.
-- D는 Windows logical drive root 목록을 비동기로 열고 Up/Down/Enter/Esc로 선택한다. 오류나
+- D는 플랫폼의 filesystem root/mount 후보를 비동기로 열고 Up/Down/Enter/Esc로 선택한다. 오류나
   빈 목록은 현재 directory를 바꾸지 않는다. S/Ctrl+S/H/D label과 Help는 CommandRegistry 한
   정의에서 생성한다.
 
@@ -219,7 +218,7 @@ row        = local % rows_per_column
 ## 8. 파일 실행과 안전 정책
 
 - Enter on directory: 해당 디렉터리 로드.
-- Enter on regular file: Windows ShellExecute 계열 어댑터로 기본 연결 프로그램 실행.
+- Enter on regular file: 플랫폼 launcher 어댑터로 기본 연결 프로그램 실행.
 - 실행 전에 셸 문자열을 조립하지 않는다.
 - Delete 기본 동작은 휴지통 이동이다.
 - 영구 삭제는 `Shift+F8`로만 시작하며 별도 경고 문구와 확인이 필요하다.
@@ -284,7 +283,7 @@ QCD:
 ## 11. 설정과 테마
 
 - 사용자 설정은 TOML 하나만 지원한다.
-- Windows 기본 위치는 플랫폼 config directory 아래 `Mdir4/config.toml`이다.
+- 기본 위치는 XDG config directory 또는 macOS 사용자 config directory 아래 `mdir4/config.toml`이다.
 - 저장은 임시 파일 작성 후 원자적 교체를 사용한다.
 - 손상된 설정은 `.broken-<timestamp>`로 보존하고 기본값으로 시작하면서 경고한다.
 - `column_mode = "auto"`에서는 저장된 fixed count를 무시한다.
