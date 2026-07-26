@@ -340,6 +340,7 @@ fn parse_key_code(text: &str) -> Result<KeyCode, String> {
         "backspace" => KeyCode::Backspace,
         "esc" | "escape" => KeyCode::Escape,
         "insert" => KeyCode::Insert,
+        "delete" | "del" => KeyCode::Delete,
         "space" => KeyCode::Character(' '),
         "tab" => KeyCode::Tab,
         _ if lower.starts_with('f') => {

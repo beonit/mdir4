@@ -89,8 +89,17 @@ pub enum Action {
     },
     ShowViewer,
     ShowEditor,
+    ExternalEditorFinished {
+        path: PathBuf,
+        result: Result<(), String>,
+    },
     DialogCharacter(char),
     DialogBackspace,
+    DialogDelete,
+    DialogMoveLeft,
+    DialogMoveRight,
+    DialogHome,
+    DialogEnd,
     ConfirmDialog,
     CancelDialog,
     ViewerLoaded {
@@ -526,10 +535,19 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             {
                 let path = entry.path.clone();
                 let name = entry.display_name();
-                state.screen = Screen::Editor;
-                state.message = Some(format!("Loading {name}..."));
+                state.screen = Screen::Progress;
+                state.message = Some(format!("Opening {name} in editor..."));
                 return vec![Effect::LoadEditor(path)];
             }
+        }
+        Action::ExternalEditorFinished { path, result } => {
+            state.editor = None;
+            state.screen = Screen::Main;
+            state.message = Some(match result {
+                Ok(()) => format!("Finished editing {}", path.display()),
+                Err(error) => format!("Editor failed for {}: {error}", path.display()),
+            });
+            return vec![Effect::LoadDirectory(state.current_path.clone())];
         }
         Action::DialogCharacter(character) => {
             if let Some(dialog) = &mut state.input_dialog {
@@ -539,6 +557,31 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::DialogBackspace => {
             if let Some(dialog) = &mut state.input_dialog {
                 dialog.backspace();
+            }
+        }
+        Action::DialogDelete => {
+            if let Some(dialog) = &mut state.input_dialog {
+                dialog.delete();
+            }
+        }
+        Action::DialogMoveLeft => {
+            if let Some(dialog) = &mut state.input_dialog {
+                dialog.move_left();
+            }
+        }
+        Action::DialogMoveRight => {
+            if let Some(dialog) = &mut state.input_dialog {
+                dialog.move_right();
+            }
+        }
+        Action::DialogHome => {
+            if let Some(dialog) = &mut state.input_dialog {
+                dialog.move_home();
+            }
+        }
+        Action::DialogEnd => {
+            if let Some(dialog) = &mut state.input_dialog {
+                dialog.move_end();
             }
         }
         Action::ConfirmDialog => {

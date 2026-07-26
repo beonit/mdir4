@@ -248,12 +248,18 @@
     시작 디렉터리로 되돌아가지 않도록 함.
   - 검증: MCD가 main 파일/metadata/footer를 남기지 않는 render test, 전체 51 lib tests 및
     전체 회귀 게이트 통과.
-- [ ] M4+ EDIT-01 외부 `$EDITOR` 연결 화면
-  - `$EDITOR`와 `$VISUAL` fallback, 인자 전달, child process 대기, alternate screen/raw mode 복구,
-    취소·비정상 종료·저장 후 reload를 Linux/macOS 기준으로 정의한다.
-- [ ] M4+ RENAME-01 이름 중간 커서 편집
+- [x] M4+ EDIT-01 외부 `$EDITOR` 연결 화면
+  - `$EDITOR` 인자 전달, child process 대기, alternate screen/raw mode 복구, 설정 부재 시
+    built-in editor fallback, 비정상 종료 표시와 종료 후 directory reload를 Linux/macOS 기준으로
+    구현했다. TUI를 실행할 수 있는 실제 terminal인데 상속된 `TERM`이 `dumb`이면 external editor
+    child에서만 `xterm-256color`로 보정한다.
+  - 검증: `emacs -nw` 실제 PTY 재현, quoted argument를 shell 없이 분리하는 parser,
+    terminal suspend/resume 및 `TERM=dumb` 보정 unit test.
+- [x] M4+ RENAME-01 이름 중간 커서 편집
   - Left/Right/Home/End와 grapheme 단위 Unicode 커서, 삽입·삭제, 확장자 정책, validation 오류 위치를
-    편집 버퍼 snapshot으로 먼저 확정한다.
+    편집 버퍼에 구현했다. 가짜 caret 문자를 문자열에 삽입하지 않고 실제 terminal cursor를 사용하며,
+    긴 파일명은 Unicode cell 폭을 기준으로 cursor가 보이도록 수평 viewport를 계산한다.
+  - 검증: 한글 중간 삽입/Delete, emoji grapheme Backspace, dialog key mapping unit test.
 
 ## v1 이후 Git built-in
 

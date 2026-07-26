@@ -111,6 +111,21 @@ fn screen_mapping_precedes_main_mapping() {
 }
 
 #[test]
+fn input_dialog_maps_cursor_and_delete_keys_before_main_commands() {
+    let registry = CommandRegistry::default();
+    for (key, expected) in [
+        (KeyCode::Left, "DialogMoveLeft"),
+        (KeyCode::Right, "DialogMoveRight"),
+        (KeyCode::Home, "DialogHome"),
+        (KeyCode::End, "DialogEnd"),
+        (KeyCode::Delete, "DialogDelete"),
+    ] {
+        let action = mapper::map_chord(Screen::InputDialog, KeyChord::plain(key), &registry);
+        assert_eq!(format!("{action:?}"), format!("Some({expected})"));
+    }
+}
+
+#[test]
 fn control_q_and_uppercase_control_a_are_normalized() {
     let registry = CommandRegistry::default();
     assert!(matches!(

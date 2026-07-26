@@ -12,6 +12,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 mod palette;
 
@@ -343,14 +344,62 @@ fn render_input_dialog(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) 
     let area = centered_rect(viewport.width.saturating_sub(8).min(72), 8, viewport);
     frame.render_widget(Clear, area);
     let error = dialog.error.as_deref().unwrap_or("");
-    let text = format!(
-        "{}\n\n{}\n{}\n\nEnter Confirm   Esc Cancel",
-        dialog.prompt, dialog.value, error
+    frame.render_widget(dialog_block(&format!(" {} ", dialog.title)), area);
+    let inner_x = area.x.saturating_add(1);
+    let inner_width = area.width.saturating_sub(2);
+    frame.render_widget(
+        Paragraph::new(dialog.prompt.as_str()),
+        Rect::new(inner_x, area.y.saturating_add(1), inner_width, 1),
+    );
+    let (visible_value, cursor_x) =
+        visible_input(&dialog.value, dialog.cursor, inner_width as usize);
+    let input_area = Rect::new(inner_x, area.y.saturating_add(3), inner_width, 1);
+    frame.render_widget(Paragraph::new(visible_value), input_area);
+    frame.render_widget(
+        Paragraph::new(error),
+        Rect::new(inner_x, area.y.saturating_add(4), inner_width, 1),
     );
     frame.render_widget(
-        Paragraph::new(text).block(dialog_block(&format!(" {} ", dialog.title))),
-        area,
+        Paragraph::new("Enter Confirm   Esc Cancel"),
+        Rect::new(inner_x, area.y.saturating_add(6), inner_width, 1),
     );
+    if inner_width > 0 {
+        frame.set_cursor_position((
+            input_area.x + cursor_x.min(inner_width.saturating_sub(1)),
+            input_area.y,
+        ));
+    }
+}
+
+fn visible_input(value: &str, cursor: usize, max_cells: usize) -> (String, u16) {
+    if max_cells == 0 {
+        return (String::new(), 0);
+    }
+    let graphemes = value.graphemes(true).collect::<Vec<_>>();
+    let cursor = cursor.min(graphemes.len());
+    let cursor_limit = max_cells.saturating_sub(1);
+    let mut start = cursor;
+    let mut cursor_cells = 0;
+    while start > 0 {
+        let width = crate::layout::text::cell_width(graphemes[start - 1]);
+        if cursor_cells + width > cursor_limit {
+            break;
+        }
+        start -= 1;
+        cursor_cells += width;
+    }
+
+    let mut visible = String::new();
+    let mut used = 0;
+    for grapheme in &graphemes[start..] {
+        let width = crate::layout::text::cell_width(grapheme);
+        if used + width > max_cells {
+            break;
+        }
+        visible.push_str(grapheme);
+        used += width;
+    }
+    (visible, cursor_cells.min(u16::MAX as usize) as u16)
 }
 
 fn render_confirm_dialog(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
@@ -810,7 +859,7 @@ mod tests {
     use std::{collections::HashSet, ffi::OsString, path::PathBuf};
 
     use insta::assert_snapshot;
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{Terminal, backend::TestBackend, layout::Position};
 
     use super::*;
     use crate::{app::AppState, fs::FileEntry, layout::Viewport};
@@ -888,6 +937,43 @@ mod tests {
         let result = truncate_cells("한글파일.txt", 8);
         assert!(crate::layout::text::cell_width(&result) <= 8);
         assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn input_view_keeps_a_unicode_cursor_inside_the_field() {
+        assert_eq!(visible_input("보고서.txt", 2, 12), ("보고서.txt".into(), 4));
+        assert_eq!(visible_input("가나다라마바사", 7, 6), ("바사".into(), 4));
+        assert_eq!(visible_input("a👨‍👩‍👧‍👦b", 2, 4), ("a👨‍👩‍👧‍👦b".into(), 3));
+    }
+
+    #[test]
+    fn input_dialog_places_the_real_terminal_cursor_at_the_unicode_cell() {
+        let mut state = state_with(Vec::new(), 80, 25);
+        let mut dialog = crate::model::dialog::InputDialog::new(
+            "Rename",
+            "New name",
+            "보고서.txt",
+            crate::model::dialog::InputPurpose::Rename,
+            None,
+        );
+        dialog.move_home();
+        dialog.move_right();
+        dialog.move_right();
+        state.input_dialog = Some(dialog);
+        state.screen = Screen::InputDialog;
+        let metrics = crate::layout::calculate_for_entries(
+            state.viewport,
+            state.layout_settings,
+            state.entries.len(),
+        );
+        let backend = TestBackend::new(80, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| render(frame, &state, &metrics))
+            .unwrap();
+
+        assert_eq!(terminal.backend().cursor_position(), Position::new(9, 11));
     }
 
     #[test]

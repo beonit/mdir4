@@ -1,8 +1,10 @@
 use std::{
     collections::VecDeque,
     env,
+    ffi::{OsStr, OsString},
     io::{self, Stdout, stdout},
-    path::PathBuf,
+    path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex, Once, mpsc},
     thread,
     time::Duration,
@@ -59,7 +61,7 @@ pub fn run() -> Result<(), AppError> {
     let start_path = start_path(&loaded.config)?;
     install_panic_hook();
     let mut session = TerminalSession::new()?;
-    run_loop(&mut session.terminal, start_path, config_path, loaded)
+    run_loop(&mut session, start_path, config_path, loaded)
 }
 
 fn start_path(config: &crate::config::Config) -> Result<PathBuf, AppError> {
@@ -91,12 +93,12 @@ fn config_path() -> PathBuf {
 }
 
 fn run_loop(
-    terminal: &mut AppTerminal,
+    session: &mut TerminalSession,
     start_path: PathBuf,
     config_path: PathBuf,
     loaded: crate::config::LoadedConfig,
 ) -> Result<(), AppError> {
-    let size = terminal.size()?;
+    let size = session.terminal.size()?;
     let mut state = AppState::new(
         start_path,
         Viewport {
@@ -152,10 +154,35 @@ fn run_loop(
         Arc::new(SystemFileLauncher),
     );
     let mut dirty = true;
+    let mut foreground_editors = VecDeque::new();
 
     loop {
         if !actions.is_empty() {
-            dirty |= drain_actions(&mut state, &mut actions, &worker);
+            dirty |= drain_actions(&mut state, &mut actions, &worker, &mut foreground_editors);
+        }
+        while let Some(path) = foreground_editors.pop_front() {
+            match external_editor_from_environment() {
+                Ok(Some(editor)) => {
+                    let result = launch_external_editor(session, &editor, &path)?;
+                    actions.push_back(Action::ExternalEditorFinished { path, result });
+                    dirty = true;
+                }
+                Ok(None) => {
+                    if worker.submit(Effect::LoadEditor(path)).is_err() {
+                        state.screen = crate::app::Screen::Main;
+                        state.message = Some("Worker is busy; try again shortly.".to_string());
+                    }
+                }
+                Err(error) => {
+                    state.message = Some(format!(
+                        "Invalid EDITOR ({error}); using the built-in editor."
+                    ));
+                    if worker.submit(Effect::LoadEditor(path)).is_err() {
+                        state.screen = crate::app::Screen::Main;
+                        state.message = Some("Worker is busy; try again shortly.".to_string());
+                    }
+                }
+            }
         }
         while let Some(action) = worker.try_action() {
             actions.push_back(action);
@@ -166,7 +193,9 @@ fn run_loop(
                 state.layout_settings,
                 state.entries.len(),
             );
-            terminal.draw(|frame| ui::render(frame, &state, &metrics))?;
+            session
+                .terminal
+                .draw(|frame| ui::render(frame, &state, &metrics))?;
             dirty = false;
         }
         if state.should_quit {
@@ -198,17 +227,91 @@ fn drain_actions(
     state: &mut AppState,
     actions: &mut VecDeque<Action>,
     worker: &EffectWorker,
+    foreground_editors: &mut VecDeque<PathBuf>,
 ) -> bool {
     let mut dirty = false;
     while let Some(action) = actions.pop_front() {
         dirty |= !matches!(action, Action::Tick);
         for effect in app::reduce(state, action) {
+            if let Effect::LoadEditor(path) = effect {
+                foreground_editors.push_back(path);
+                continue;
+            }
             if worker.submit(effect).is_err() {
                 state.message = Some("Worker is busy; try again shortly.".to_string());
             }
         }
     }
     dirty
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExternalEditor {
+    program: OsString,
+    arguments: Vec<OsString>,
+}
+
+fn external_editor_from_environment() -> Result<Option<ExternalEditor>, String> {
+    let Some(value) = env::var_os("EDITOR") else {
+        return Ok(None);
+    };
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let value = value
+        .into_string()
+        .map_err(|_| "EDITOR contains non-Unicode data".to_string())?;
+    parse_external_editor("EDITOR", &value).map(Some)
+}
+
+fn parse_external_editor(variable: &str, value: &str) -> Result<ExternalEditor, String> {
+    let words = shell_words::split(value)
+        .map_err(|error| format!("could not parse {variable}: {error}"))?;
+    let Some((program, arguments)) = words.split_first() else {
+        return Err(format!("{variable} is empty"));
+    };
+    Ok(ExternalEditor {
+        program: OsString::from(program),
+        arguments: arguments.iter().map(OsString::from).collect(),
+    })
+}
+
+fn launch_external_editor(
+    session: &mut TerminalSession,
+    editor: &ExternalEditor,
+    path: &Path,
+) -> Result<Result<(), String>, AppError> {
+    session.suspend();
+    let result = Command::new(&editor.program)
+        .args(&editor.arguments)
+        .arg(path)
+        .env("TERM", external_editor_term(env::var_os("TERM").as_deref()))
+        .current_dir(path.parent().unwrap_or_else(|| Path::new(".")))
+        .status()
+        .map_err(|error| format!("could not start {:?}: {error}", editor.program))
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("editor exited with {status}"))
+            }
+        });
+    session.resume()?;
+    Ok(result)
+}
+
+fn external_editor_term(term: Option<&OsStr>) -> OsString {
+    match term {
+        Some(value)
+            if !value.is_empty()
+                && !value
+                    .to_str()
+                    .is_some_and(|value| value.eq_ignore_ascii_case("dumb")) =>
+        {
+            value.to_os_string()
+        }
+        _ => OsString::from("xterm-256color"),
+    }
 }
 
 enum WorkerRequest {
@@ -572,6 +675,15 @@ impl TerminalSession {
             _lifecycle: lifecycle,
         })
     }
+
+    fn suspend(&mut self) {
+        self._lifecycle.restore();
+    }
+
+    fn resume(&mut self) -> io::Result<()> {
+        self._lifecycle.resume()?;
+        self.terminal.clear()
+    }
 }
 
 trait TerminalOps {
@@ -607,6 +719,23 @@ impl<O: TerminalOps> TerminalLifecycle<O> {
             restore_ops(&mut self.ops);
             self.active = false;
         }
+    }
+
+    fn resume(&mut self) -> io::Result<()> {
+        if self.active {
+            return Ok(());
+        }
+        self.ops.enable_raw()?;
+        if let Err(error) = self.ops.enter_alternate_screen() {
+            restore_ops(&mut self.ops);
+            return Err(error);
+        }
+        if let Err(error) = self.ops.hide_cursor() {
+            restore_ops(&mut self.ops);
+            return Err(error);
+        }
+        self.active = true;
+        Ok(())
     }
 }
 
@@ -856,6 +985,56 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_can_suspend_and_resume_around_a_child_process() {
+        let (ops, calls) = RecordingOps::new(None);
+        let mut lifecycle = TerminalLifecycle::start(ops).unwrap();
+
+        lifecycle.restore();
+        lifecycle.resume().unwrap();
+
+        assert_eq!(
+            *calls.borrow(),
+            [
+                "enable_raw",
+                "enter_alternate_screen",
+                "hide_cursor",
+                "show_cursor",
+                "leave_alternate_screen",
+                "disable_raw",
+                "enable_raw",
+                "enter_alternate_screen",
+                "hide_cursor",
+            ]
+        );
+    }
+
+    #[test]
+    fn external_editor_arguments_are_parsed_without_a_shell() {
+        let editor = parse_external_editor("EDITOR", "code --wait --reuse-window").unwrap();
+        assert_eq!(editor.program, OsString::from("code"));
+        assert_eq!(
+            editor.arguments,
+            vec![OsString::from("--wait"), OsString::from("--reuse-window")]
+        );
+
+        let quoted = parse_external_editor("EDITOR", "'/Applications/My Editor' --wait").unwrap();
+        assert_eq!(quoted.program, OsString::from("/Applications/My Editor"));
+        assert_eq!(quoted.arguments, vec![OsString::from("--wait")]);
+    }
+
+    #[test]
+    fn external_editor_replaces_a_dumb_terminal_capability() {
+        assert_eq!(
+            external_editor_term(Some(OsStr::new("dumb"))),
+            OsString::from("xterm-256color")
+        );
+        assert_eq!(
+            external_editor_term(Some(OsStr::new("xterm-kitty"))),
+            OsString::from("xterm-kitty")
+        );
+    }
+
+    #[test]
     fn help_captures_navigation_keys() {
         let app = state(Screen::Help);
         let key = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
@@ -923,7 +1102,13 @@ mod tests {
         );
         let mut app = state(Screen::Main);
         let mut actions = VecDeque::from([Action::Tick]);
-        assert!(!drain_actions(&mut app, &mut actions, &worker));
+        let mut foreground_editors = VecDeque::new();
+        assert!(!drain_actions(
+            &mut app,
+            &mut actions,
+            &worker,
+            &mut foreground_editors
+        ));
     }
 
     #[test]

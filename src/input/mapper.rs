@@ -59,6 +59,36 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 ..
             } => Some(Action::DialogBackspace),
             KeyChord {
+                code: KeyCode::Delete,
+                control: false,
+                alt: false,
+                ..
+            } => Some(Action::DialogDelete),
+            KeyChord {
+                code: KeyCode::Left,
+                control: false,
+                alt: false,
+                ..
+            } => Some(Action::DialogMoveLeft),
+            KeyChord {
+                code: KeyCode::Right,
+                control: false,
+                alt: false,
+                ..
+            } => Some(Action::DialogMoveRight),
+            KeyChord {
+                code: KeyCode::Home,
+                control: false,
+                alt: false,
+                ..
+            } => Some(Action::DialogHome),
+            KeyChord {
+                code: KeyCode::End,
+                control: false,
+                alt: false,
+                ..
+            } => Some(Action::DialogEnd),
+            KeyChord {
                 code: KeyCode::Character(character),
                 control: false,
                 alt: false,
