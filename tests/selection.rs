@@ -63,6 +63,9 @@ fn state() -> AppState {
         plugin_decorations: std::collections::BTreeMap::new(),
         git_status_view: None,
         git_diff: None,
+        git_log: Vec::new(),
+        git_log_selected: 0,
+        git_log_detail: None,
     }
 }
 

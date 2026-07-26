@@ -63,6 +63,10 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 ..
             } => Some(Action::ShowGitCommit),
             KeyChord {
+                code: KeyCode::Function(10),
+                ..
+            } => Some(Action::ShowGitLog),
+            KeyChord {
                 code: KeyCode::Enter | KeyCode::Function(3),
                 ..
             } => Some(Action::ShowGitDiff),
@@ -111,6 +115,35 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 code: KeyCode::Function(3),
                 ..
             } => Some(Action::GitDiffNextMatch { backwards: false }),
+            _ => None,
+        };
+    }
+    if screen == Screen::GitLog {
+        return match chord {
+            KeyChord {
+                code: KeyCode::Escape,
+                ..
+            } => Some(Action::CloseOverlay),
+            KeyChord {
+                code: KeyCode::Up, ..
+            } => Some(Action::GitLogMove(-1)),
+            KeyChord {
+                code: KeyCode::Down,
+                ..
+            } => Some(Action::GitLogMove(1)),
+            KeyChord {
+                code: KeyCode::Enter | KeyCode::Function(3),
+                ..
+            } => Some(Action::ShowGitLogDetail),
+            _ => None,
+        };
+    }
+    if screen == Screen::GitLogDetail {
+        return match chord {
+            KeyChord {
+                code: KeyCode::Escape,
+                ..
+            } => Some(Action::CloseOverlay),
             _ => None,
         };
     }

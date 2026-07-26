@@ -94,6 +94,14 @@ fn control_g_opens_git_status_and_escape_closes_the_plugin_view() {
     ));
     assert!(matches!(
         mapper::map_chord(
+            Screen::GitStatus,
+            KeyChord::plain(KeyCode::Function(10)),
+            &registry
+        ),
+        Some(Action::ShowGitLog)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
             Screen::GitDiff,
             KeyChord::control(KeyCode::Character('f')),
             &registry

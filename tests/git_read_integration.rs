@@ -1,4 +1,5 @@
 use mdir4::plugins::git::{
+    history::{GitCliHistoryBackend, GitHistoryBackend},
     local::{GitCliMutationBackend, GitMutationBackend, MutationKind, plan_targets},
     model::{DiffTarget, GitReadBackend},
     real_backend::GitCliReadBackend,
@@ -118,4 +119,28 @@ fn cli_mutation_backend_commits_staged_changes_with_the_configured_identity() {
         String::from_utf8_lossy(&subject.stdout).trim(),
         "add new file"
     );
+}
+
+#[test]
+fn cli_history_backend_lists_commits_and_reads_the_selected_detail() {
+    let temp = tempdir().unwrap();
+    git(temp.path(), &["init", "-q"]);
+    git(temp.path(), &["config", "user.name", "Test User"]);
+    git(
+        temp.path(),
+        &["config", "user.email", "test@example.invalid"],
+    );
+    fs::write(temp.path().join("note.txt"), "one\n").unwrap();
+    git(temp.path(), &["add", "note.txt"]);
+    git(temp.path(), &["commit", "-qm", "first subject"]);
+    fs::write(temp.path().join("note.txt"), "two\n").unwrap();
+    git(temp.path(), &["commit", "-am", "second subject", "-q"]);
+
+    let backend = GitCliHistoryBackend;
+    let entries = backend.log(temp.path(), 10).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].subject, "second subject");
+    let detail = backend.detail(temp.path(), &entries[0].hash).unwrap();
+    assert!(detail.contains("second subject"));
+    assert!(detail.contains("Test User"));
 }

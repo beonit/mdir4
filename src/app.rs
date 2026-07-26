@@ -51,6 +51,8 @@ pub enum Screen {
     Settings,
     GitStatus,
     GitDiff,
+    GitLog,
+    GitLogDetail,
 }
 
 #[derive(Debug)]
@@ -195,6 +197,15 @@ pub enum Action {
     GitStage,
     GitUnstage,
     ShowGitCommit,
+    ShowGitLog,
+    GitLogLoaded {
+        result: Result<Vec<crate::plugins::git::history::GitLogEntry>, String>,
+    },
+    GitLogMove(i32),
+    ShowGitLogDetail,
+    GitLogDetailLoaded {
+        result: Result<String, String>,
+    },
     GitMutationCompleted {
         action: String,
         result: Result<(), String>,
@@ -265,6 +276,11 @@ pub enum Effect {
         directory: PathBuf,
         path: crate::plugins::git::model::RepoRelativePath,
     },
+    LoadGitLog(PathBuf),
+    LoadGitLogDetail {
+        directory: PathBuf,
+        hash: String,
+    },
     RunGitMutation {
         directory: PathBuf,
         plan: crate::plugins::git::local::MutationPlan,
@@ -310,6 +326,9 @@ pub struct AppState {
     pub plugin_decorations: BTreeMap<String, crate::plugins::api::FileDecoration>,
     pub git_status_view: Option<crate::plugins::git::status_view::GitStatusViewState>,
     pub git_diff: Option<(PathBuf, ViewerState)>,
+    pub git_log: Vec<crate::plugins::git::history::GitLogEntry>,
+    pub git_log_selected: usize,
+    pub git_log_detail: Option<ViewerState>,
 }
 
 impl AppState {
@@ -352,6 +371,9 @@ impl AppState {
             plugin_decorations: BTreeMap::new(),
             git_status_view: None,
             git_diff: None,
+            git_log: Vec::new(),
+            git_log_selected: 0,
+            git_log_detail: None,
         }
     }
 
@@ -575,6 +597,44 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 None,
             ));
             state.screen = Screen::InputDialog;
+        }
+        Action::ShowGitLog => {
+            state.git_log.clear();
+            state.git_log_selected = 0;
+            state.screen = Screen::GitLog;
+            return vec![Effect::LoadGitLog(state.current_path.clone())];
+        }
+        Action::GitLogLoaded { result } => match result {
+            Ok(entries) => {
+                state.git_log = entries;
+                state.git_log_selected = state
+                    .git_log_selected
+                    .min(state.git_log.len().saturating_sub(1));
+            }
+            Err(error) => state.message = Some(error),
+        },
+        Action::GitLogMove(delta) => {
+            let last = state.git_log.len().saturating_sub(1);
+            state.git_log_selected = state
+                .git_log_selected
+                .saturating_add_signed(delta as isize)
+                .min(last);
+        }
+        Action::ShowGitLogDetail => {
+            if let Some(entry) = state.git_log.get(state.git_log_selected) {
+                state.git_log_detail = Some(ViewerState::Loading { generation: 1 });
+                state.screen = Screen::GitLogDetail;
+                return vec![Effect::LoadGitLogDetail {
+                    directory: state.current_path.clone(),
+                    hash: entry.hash.clone(),
+                }];
+            }
+        }
+        Action::GitLogDetailLoaded { result } => {
+            state.git_log_detail = Some(match result {
+                Ok(detail) => ViewerState::decode(detail.into_bytes()),
+                Err(error) => ViewerState::Error(error),
+            });
         }
         Action::GitMutationCompleted { action, result } => {
             state.message = Some(match result {
@@ -1593,7 +1653,15 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
         Action::RequestQuit => state.screen = Screen::QuitConfirm,
         Action::CloseOverlay => {
-            if state.screen == Screen::GitDiff {
+            if state.screen == Screen::GitLogDetail {
+                state.git_log_detail = None;
+                state.screen = Screen::GitLog;
+                return Vec::new();
+            } else if state.screen == Screen::GitLog {
+                state.git_log.clear();
+                state.screen = Screen::GitStatus;
+                return Vec::new();
+            } else if state.screen == Screen::GitDiff {
                 state.git_diff = None;
                 state.screen = Screen::GitStatus;
                 return Vec::new();
@@ -1736,6 +1804,9 @@ mod tests {
             plugin_decorations: BTreeMap::new(),
             git_status_view: None,
             git_diff: None,
+            git_log: Vec::new(),
+            git_log_selected: 0,
+            git_log_detail: None,
         }
     }
 

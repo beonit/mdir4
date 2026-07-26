@@ -31,6 +31,10 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         render_git_diff(frame, metrics.viewport, state);
         return;
     }
+    if state.screen == Screen::GitLogDetail {
+        render_git_log_detail(frame, metrics.viewport, state);
+        return;
+    }
 
     render_main(frame, state, metrics);
     match state.screen {
@@ -43,7 +47,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         Screen::QuitConfirm => render_quit_confirmation(frame, metrics.viewport),
         Screen::InputDialog => render_input_dialog(frame, state, metrics.viewport),
         Screen::ConfirmDialog => render_confirm_dialog(frame, state, metrics.viewport),
-        Screen::Viewer | Screen::GitDiff => {
+        Screen::Viewer | Screen::GitDiff | Screen::GitLogDetail => {
             unreachable!("full-screen document renders before the main screen")
         }
         Screen::Editor => render_editor(frame, state, metrics.viewport),
@@ -55,6 +59,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         Screen::Menu => render_menu(frame, state, metrics.viewport),
         Screen::Settings => render_settings(frame, state, metrics.viewport),
         Screen::GitStatus => render_git_status(frame, state, metrics.viewport),
+        Screen::GitLog => render_git_log(frame, state, metrics.viewport),
         Screen::Main => {}
     }
 }
@@ -87,7 +92,7 @@ fn render_git_status(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         .collect();
     frame.render_widget(
         Paragraph::new(rows).block(dialog_block(" Git Status ").title_bottom(
-            "Enter/F3 Diff  F5 Stage  F6 Unstage  F7 Commit  Space Mark  R Refresh  Esc Close",
+                "Enter/F3 Diff  F5 Stage  F6 Unstage  F7 Commit  F10 Log  Space Mark  R Refresh  Esc Close",
         )),
         viewport,
     );
@@ -105,6 +110,43 @@ fn render_git_diff(frame: &mut Frame<'_>, viewport: Rect, state: &AppState) {
         &format!(" Git Diff: {} ", path.display()),
         "Esc Back  Up/Down Scroll  PgUp/PgDn Page  Ctrl+F Find  F3 Next",
     );
+}
+
+fn render_git_log(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
+    frame.render_widget(Clear, viewport);
+    let rows: Vec<_> = state
+        .git_log
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            Line::raw(format!(
+                "{} {}  {}  {}  {}",
+                if index == state.git_log_selected {
+                    ">"
+                } else {
+                    " "
+                },
+                &entry.hash[..entry.hash.len().min(10)],
+                entry.date,
+                entry.author,
+                entry.subject
+            ))
+        })
+        .collect();
+    frame.render_widget(
+        Paragraph::new(rows).block(
+            dialog_block(" Git Log ").title_bottom("Up/Down Move  Enter/F3 Detail  Esc Back"),
+        ),
+        viewport,
+    );
+}
+
+fn render_git_log_detail(frame: &mut Frame<'_>, viewport: Rect, state: &AppState) {
+    frame.render_widget(Clear, viewport);
+    let Some(detail) = &state.git_log_detail else {
+        return;
+    };
+    render_document_viewer(frame, viewport, detail, " Git Commit Detail ", "Esc Back");
 }
 
 fn render_menu(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
@@ -1064,6 +1106,9 @@ mod tests {
             plugin_decorations: std::collections::BTreeMap::new(),
             git_status_view: None,
             git_diff: None,
+            git_log: Vec::new(),
+            git_log_selected: 0,
+            git_log_detail: None,
         }
     }
 
@@ -1251,6 +1296,9 @@ mod tests {
             plugin_decorations: std::collections::BTreeMap::new(),
             git_status_view: None,
             git_diff: None,
+            git_log: Vec::new(),
+            git_log_selected: 0,
+            git_log_detail: None,
         };
         assert_snapshot!(rendered(&state, 80, 25));
     }

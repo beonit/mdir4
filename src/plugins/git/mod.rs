@@ -11,6 +11,7 @@ use crate::{
 
 pub mod decoration;
 pub mod fake_read_backend;
+pub mod history;
 pub mod local;
 pub mod model;
 pub mod real_backend;
