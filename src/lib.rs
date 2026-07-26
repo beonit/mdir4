@@ -9,6 +9,7 @@ pub mod model;
 pub mod operations;
 pub mod plugins;
 pub mod ports;
+pub mod remote;
 pub mod runtime;
 pub mod theme;
 pub mod ui;
