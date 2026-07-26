@@ -2,7 +2,7 @@ use std::fs;
 
 use mdir4::config::{
     self,
-    schema::{Config, QcdEntry, ViewMode},
+    schema::{Config, PluginConfig, QcdEntry, ViewMode},
 };
 use tempfile::tempdir;
 
@@ -31,6 +31,23 @@ fn config_roundtrip_partial_and_unknown_fields_are_supported() {
     let partial = config::load(&path).unwrap();
     assert!(!partial.show_hidden);
     assert_eq!(partial.theme, "classic");
+}
+
+#[test]
+fn generic_plugin_config_roundtrips_keys_and_preserves_unknown_plugin_values() {
+    let temporary = tempdir().unwrap();
+    let path = temporary.path().join("config.toml");
+    fs::write(&path, "version = 1\n[plugins.fake]\nenabled = true\n[plugins.fake.keymap]\nopen = \"Alt+F\"\n[plugins.fake.extra]\nlabel = \"원문\"\n").unwrap();
+    let config = config::load(&path).unwrap();
+    assert!(config.plugins["fake"].enabled);
+    assert_eq!(config.plugins["fake"].keymap["open"], "Alt+F");
+    assert_eq!(
+        config.plugins["fake"].extra["extra"]["label"].as_str(),
+        Some("원문")
+    );
+    config::save_atomic(&path, &config).unwrap();
+    assert_eq!(config::load(&path).unwrap(), config);
+    let _ = PluginConfig::default();
 }
 
 #[test]

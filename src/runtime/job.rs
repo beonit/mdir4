@@ -26,6 +26,37 @@ pub fn cancellation_pair() -> (CancelHandle, CancelToken) {
     (CancelHandle(shared.clone()), CancelToken(shared))
 }
 
+#[derive(Debug, Clone)]
+pub struct JobControl {
+    pub operation_id: OperationId,
+    pub cancel: CancelToken,
+    pub deadline: Deadline,
+    cancel_handle: CancelHandle,
+}
+
+impl JobControl {
+    pub fn new(deadline: Deadline) -> (CancelHandle, Self) {
+        let (handle, cancel) = cancellation_pair();
+        (
+            handle.clone(),
+            Self {
+                operation_id: OperationId::next(),
+                cancel,
+                deadline,
+                cancel_handle: handle,
+            },
+        )
+    }
+
+    pub fn cancel_handle(&self) -> CancelHandle {
+        self.cancel_handle.clone()
+    }
+
+    pub fn is_cancelled_or_expired(&self) -> bool {
+        self.cancel.is_cancelled() || self.deadline.expired()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Deadline(Instant);
 
@@ -63,5 +94,13 @@ mod tests {
         assert!(token.is_cancelled());
         assert_ne!(OperationId::next(), OperationId::next());
         assert!(Deadline::after(Duration::ZERO).expired());
+    }
+
+    #[test]
+    fn job_control_reuses_the_shared_cancel_and_deadline_primitives() {
+        let (handle, control) = JobControl::new(Deadline::after(Duration::from_secs(1)));
+        assert!(!control.is_cancelled_or_expired());
+        handle.cancel();
+        assert!(control.is_cancelled_or_expired());
     }
 }

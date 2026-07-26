@@ -314,6 +314,40 @@ fn external_editor_term(term: Option<&OsStr>) -> OsString {
     }
 }
 
+fn classify_text_file(path: &Path) -> Result<bool, String> {
+    let output = Command::new("file")
+        .args(["--brief", "--mime-type", "--"])
+        .arg(path)
+        .output()
+        .map_err(|error| format!("could not run file: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("file exited with {}", output.status));
+    }
+    let mime_types = String::from_utf8_lossy(&output.stdout);
+    let mut mime_types = mime_types.lines().map(str::trim);
+    Ok(mime_types.next().is_some_and(is_text_mime_type) && mime_types.all(is_text_mime_type))
+}
+
+fn is_text_mime_type(mime_type: &str) -> bool {
+    mime_type.starts_with("text/")
+        || matches!(
+            mime_type,
+            "application/json"
+                | "application/javascript"
+                | "application/sql"
+                | "application/toml"
+                | "application/xml"
+                | "application/x-empty"
+                | "application/x-httpd-php"
+                | "application/x-javascript"
+                | "application/x-sh"
+                | "application/x-yaml"
+                | "application/yaml"
+                | "inode/x-empty"
+        )
+}
+
+#[allow(clippy::large_enum_variant)] // bounded queue owns one Effect without a second allocation.
 enum WorkerRequest {
     Execute(Effect),
     Stop,
@@ -389,6 +423,10 @@ impl EffectWorker {
                     Effect::LaunchFile(path) => {
                         let result = launcher.launch(&path);
                         Action::FileLaunched { path, result }
+                    }
+                    Effect::ClassifyFile(path) => {
+                        let result = classify_text_file(&path);
+                        Action::FileClassified { path, result }
                     }
                     Effect::Rename { from, to } => {
                         let result = filesystem.rename(&from, &to).map(|()| OperationSummary {
@@ -924,6 +962,9 @@ mod tests {
             config_path: None,
             persisted_config: crate::config::Config::default(),
             registry: CommandRegistry::default(),
+            plugin_status: Vec::new(),
+            plugin_commands: Vec::new(),
+            plugin_decorations: std::collections::BTreeMap::new(),
         }
     }
 
@@ -1020,6 +1061,21 @@ mod tests {
         let quoted = parse_external_editor("EDITOR", "'/Applications/My Editor' --wait").unwrap();
         assert_eq!(quoted.program, OsString::from("/Applications/My Editor"));
         assert_eq!(quoted.arguments, vec![OsString::from("--wait")]);
+    }
+
+    #[test]
+    fn file_mime_classification_accepts_text_without_using_extensions() {
+        for mime_type in [
+            "text/plain",
+            "text/x-rust",
+            "application/json",
+            "application/x-empty",
+        ] {
+            assert!(is_text_mime_type(mime_type), "{mime_type}");
+        }
+        for mime_type in ["application/pdf", "application/zip", "image/png"] {
+            assert!(!is_text_mime_type(mime_type), "{mime_type}");
+        }
     }
 
     #[test]

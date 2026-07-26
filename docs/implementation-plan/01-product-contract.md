@@ -218,7 +218,10 @@ row        = local % rows_per_column
 ## 8. 파일 실행과 안전 정책
 
 - Enter on directory: 해당 디렉터리 로드.
-- Enter on regular file: 플랫폼 launcher 어댑터로 기본 연결 프로그램 실행.
+- Enter on `file --brief --mime-type`가 text MIME으로 판별한 파일: `$EDITOR`를 실행하고,
+  설정되지 않았으면 built-in editor를 연다.
+- Enter on other regular file: 플랫폼 launcher 어댑터로 기본 연결 프로그램 실행.
+- F3 View는 main 목록을 남기지 않는 full-screen read-only viewer다.
 - 실행 전에 셸 문자열을 조립하지 않는다.
 - Delete 기본 동작은 휴지통 이동이다.
 - 영구 삭제는 `Shift+F8`로만 시작하며 별도 경고 문구와 확인이 필요하다.

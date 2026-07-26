@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub version: u32,
@@ -15,6 +15,7 @@ pub struct Config {
     pub keymap: BTreeMap<String, String>,
     pub mcd_history: Vec<PathBuf>,
     pub qcd: Vec<QcdEntry>,
+    pub plugins: BTreeMap<String, PluginConfig>,
 }
 
 impl Default for Config {
@@ -30,8 +31,20 @@ impl Default for Config {
             keymap: BTreeMap::new(),
             mcd_history: Vec::new(),
             qcd: Vec::new(),
+            plugins: BTreeMap::new(),
         }
     }
+}
+
+impl Eq for Config {}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PluginConfig {
+    pub enabled: bool,
+    pub keymap: BTreeMap<String, String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

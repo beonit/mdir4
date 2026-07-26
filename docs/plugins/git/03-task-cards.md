@@ -82,7 +82,11 @@ cargo test --all-targets --all-features --locked
 - 테스트: ordering key, duplicate id 표현, payload owner/type mismatch, API에 Git 타입 없음.
 - 완료: FakePlugin만으로 callback/contribution/effect/result를 종단 assert한다.
 - 금지: GitPlugin, dynamic ABI, serde trait object, service locator.
-- 진행: [ ] 실패 테스트 [ ] 구현 [ ] 카드 테스트 [ ] 공통 gate [ ] progress 증거
+- 진행: [ ] 실패 테스트 [x] 구현 [x] 카드 테스트 [x] 공통 gate [x] progress 증거
+  - 증거(2026-07-25): `src/plugins/{mod,api,testing}.rs`와 `tests/plugin_api.rs`.
+    FakePlugin callback → effect/contribution → result 계약, owner/type payload 경계,
+    error/panic 주입, deterministic ordering, Git production dependency 부재를 검증했다.
+    `cargo fmt --all -- --check`, Clippy `-D warnings`, 전체 112 tests가 통과했다.
 
 ## G0-02 PluginManager, collision과 fault isolation
 
@@ -94,7 +98,11 @@ cargo test --all-targets --all-features --locked
 - 테스트: disabled callback 0, error/panic 뒤 다른 contribution 유지, collision별 이유,
   faulted late result 무시, clean re-enable.
 - 완료: Core reducer에 plugin id별 match가 없고 PLUG-02/03/04가 통과한다.
-- 진행: [ ] 실패 테스트 [ ] 구현 [ ] 카드 테스트 [ ] 공통 gate [ ] progress 증거
+- 진행: [ ] 실패 테스트 [x] 구현 [x] 카드 테스트 [x] 공통 gate [x] progress 증거
+  - 증거(2026-07-25): `src/plugins/manager.rs`와 `tests/plugin_manager.rs`.
+    duplicate factory/contribution ID, disabled fast path, callback error/panic 격리,
+    faulted late-result drop, 새 instance/generation 재활성화를 검증했다. 공통 gate와
+    전체 117 tests가 통과했다.
 
 ## G0-03 Plugin read lane, cancellation과 shutdown
 
@@ -111,7 +119,11 @@ cargo test --all-targets --all-features --locked
   queued/running cancel, out-of-order result, panic 변환, shutdown join/no orphan.
 - 완료: callback/render에서 job run 0이고 느린 Git read가 copy/delete lane을 점유하지 않는다.
 - 금지: 측정 없는 pool/Tokio, 기존 single worker에 plugin job 혼합.
-- 진행: [ ] 실패 테스트 [ ] 구현 [ ] 카드 테스트 [ ] 공통 gate [ ] progress 증거
+- 진행: [ ] 실패 테스트 [x] 구현 [x] 카드 테스트 [x] 공통 gate [x] progress 증거
+  - 증거(2026-07-25): `src/plugins/worker.rs`, `src/runtime/job.rs`,
+    `tests/plugin_worker.rs`. bounded single plugin-read lane, latest refresh coalescing,
+    non-blocking Busy, active cancellation, panic→terminal failure, shutdown join,
+    active generation submit/result routing을 검증했다.
 
 ## G0-04 Decoration/status/command host 연결
 

@@ -23,13 +23,23 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         return;
     }
 
+    if state.screen == Screen::Viewer {
+        render_viewer(frame, metrics.viewport, state);
+        return;
+    }
+
     render_main(frame, state, metrics);
     match state.screen {
-        Screen::Help => render_help(frame, metrics.viewport, &state.registry),
+        Screen::Help => render_help(
+            frame,
+            metrics.viewport,
+            &state.registry,
+            &state.plugin_commands,
+        ),
         Screen::QuitConfirm => render_quit_confirmation(frame, metrics.viewport),
         Screen::InputDialog => render_input_dialog(frame, state, metrics.viewport),
         Screen::ConfirmDialog => render_confirm_dialog(frame, state, metrics.viewport),
-        Screen::Viewer => render_viewer(frame, state, metrics.viewport),
+        Screen::Viewer => unreachable!("viewer renders before the main screen"),
         Screen::Editor => render_editor(frame, state, metrics.viewport),
         Screen::Progress => render_progress(frame, state, metrics.viewport),
         Screen::DrivePicker => render_drive_picker(frame, state, metrics.viewport),
@@ -419,21 +429,16 @@ fn render_confirm_dialog(frame: &mut Frame<'_>, state: &AppState, viewport: Rect
     );
 }
 
-fn render_viewer(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
+fn render_viewer(frame: &mut Frame<'_>, viewport: Rect, state: &AppState) {
     use crate::model::viewer::ViewerState;
-    let area = Rect::new(
-        viewport.x + 1,
-        viewport.y + 1,
-        viewport.width.saturating_sub(2),
-        viewport.height.saturating_sub(2),
-    );
+    let area = viewport;
     frame.render_widget(Clear, area);
     let (path, viewer) = match &state.viewer {
         Some(value) => value,
         None => return,
     };
-    let body_height = area.height.saturating_sub(2) as usize;
-    let lines: Vec<Line<'_>> = match viewer {
+    let body_height = area.height.saturating_sub(3) as usize;
+    let mut lines: Vec<Line<'_>> = match viewer {
         ViewerState::Loading { .. } => vec![Line::raw("Loading...")],
         ViewerState::Binary => vec![Line::raw("Binary file preview is not available.")],
         ViewerState::TooLarge => vec![Line::raw("File is too large to view (maximum 32 MiB).")],
@@ -447,6 +452,9 @@ fn render_viewer(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
             })
             .collect(),
     };
+    lines.push(Line::raw(
+        "Esc Close  Up/Down Scroll  PgUp/PgDn Page  Ctrl+F Find  F3 Next",
+    ));
     frame.render_widget(
         Paragraph::new(lines).block(dialog_block(&format!(" View: {} ", path.display()))),
         area,
@@ -539,7 +547,13 @@ fn render_main(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics)
                     lines.push(Line::raw(""));
                     continue;
                 };
-                let text = format_entry(entry, content_width as usize);
+                let text = format_entry_with_decoration(
+                    entry,
+                    content_width as usize,
+                    state
+                        .plugin_decorations
+                        .get(&entry.path.display().to_string()),
+                );
                 lines.push(Line::from(Span::styled(
                     text,
                     palette::entry(
@@ -605,9 +619,14 @@ fn render_main(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics)
                 .is_some_and(|entry| entry.kind == EntryKind::Parent)
         ))
     );
+    let plugin_status = state
+        .plugin_status
+        .iter()
+        .flat_map(|text| text.spans.iter().map(|span| span.text.as_str()))
+        .collect::<String>();
     render_status_line(
         frame,
-        summary,
+        format!("{summary}{plugin_status}"),
         metrics.directory_summary,
         palette::role(ThemeRole::StatusBar),
     );
@@ -625,12 +644,37 @@ fn render_main(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics)
 
     frame.render_widget(
         Paragraph::new(pad_or_truncate(
-            &state.registry.function_bar_text(),
+            &format!(
+                "{}{}",
+                state.registry.function_bar_text(),
+                plugin_command_footer(&state.plugin_commands)
+            ),
             metrics.function_bar.width as usize,
         ))
         .style(palette::role(ThemeRole::FunctionBar)),
         metrics.function_bar,
     );
+}
+
+fn format_entry_with_decoration(
+    entry: &FileEntry,
+    width: usize,
+    decoration: Option<&crate::plugins::api::FileDecoration>,
+) -> String {
+    let prefix = decoration.map_or_else(String::new, |decoration| {
+        decoration
+            .text
+            .spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect()
+    });
+    let reserved = decoration.map_or(0, |decoration| usize::from(decoration.reserved_cells));
+    format!(
+        "{}{}",
+        pad_or_truncate(&prefix, reserved.min(width)),
+        format_entry(entry, width.saturating_sub(reserved))
+    )
 }
 
 fn render_long_view(
@@ -725,13 +769,30 @@ fn render_status_line(frame: &mut Frame<'_>, text: impl AsRef<str>, area: Rect, 
     );
 }
 
-fn render_help(frame: &mut Frame<'_>, viewport: Rect, registry: &CommandRegistry) {
+fn render_help(
+    frame: &mut Frame<'_>,
+    viewport: Rect,
+    registry: &CommandRegistry,
+    plugins: &[crate::app::command_registry::PluginCommandHint],
+) {
     let width = viewport.width.saturating_sub(8).min(64);
     let height = viewport.height.saturating_sub(4).min(17);
     let area = centered_rect(width, height, viewport);
     frame.render_widget(Clear, area);
     let mut help = vec![Line::raw("Active commands")];
     help.extend(registry.active_help_lines().into_iter().map(Line::raw));
+    help.extend(plugins.iter().map(|command| {
+        let key = command
+            .key
+            .map_or("(no key)".to_string(), |key| key.display());
+        let suffix = match &command.availability {
+            crate::plugins::api::CommandAvailability::Enabled => String::new(),
+            crate::plugins::api::CommandAvailability::Disabled { reason } => {
+                format!(" [disabled: {reason}]")
+            }
+        };
+        Line::raw(format!("{key:<11} {}{suffix}", command.label))
+    }));
     help.push(Line::raw("Esc         Close this window"));
     frame.render_widget(
         Paragraph::new(help)
@@ -745,6 +806,18 @@ fn render_help(frame: &mut Frame<'_>, viewport: Rect, registry: &CommandRegistry
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn plugin_command_footer(commands: &[crate::app::command_registry::PluginCommandHint]) -> String {
+    commands
+        .iter()
+        .filter_map(|command| match command.availability {
+            crate::plugins::api::CommandAvailability::Enabled => command
+                .key
+                .map(|key| format!("  {}{}", key.display(), command.label)),
+            crate::plugins::api::CommandAvailability::Disabled { .. } => None,
+        })
+        .collect()
 }
 
 fn render_quit_confirmation(frame: &mut Frame<'_>, viewport: Rect) {
@@ -920,7 +993,55 @@ mod tests {
             config_path: None,
             persisted_config: crate::config::Config::default(),
             registry: CommandRegistry::default(),
+            plugin_status: Vec::new(),
+            plugin_commands: Vec::new(),
+            plugin_decorations: std::collections::BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn plugin_command_footer_excludes_disabled_hints() {
+        use crate::{
+            app::command_registry::PluginCommandHint,
+            input::key::{KeyChord, KeyCode},
+            plugins::api::CommandAvailability,
+        };
+        let commands = vec![
+            PluginCommandHint {
+                id: "plugin.fake.ok".into(),
+                label: "Fake".into(),
+                key: Some(KeyChord::plain(KeyCode::Function(10))),
+                availability: CommandAvailability::Enabled,
+            },
+            PluginCommandHint {
+                id: "plugin.fake.no".into(),
+                label: "Hidden".into(),
+                key: Some(KeyChord::plain(KeyCode::Function(11))),
+                availability: CommandAvailability::Disabled {
+                    reason: "Conflict".into(),
+                },
+            },
+        ];
+        assert_eq!(plugin_command_footer(&commands), "  F10Fake");
+    }
+
+    #[test]
+    fn decoration_reserves_its_prefix_cells_before_formatting_the_filename() {
+        let entry = entry("very-long-file-name.txt", EntryKind::File, 1);
+        let decoration = crate::plugins::api::FileDecoration {
+            entry_id: entry.path.display().to_string(),
+            text: crate::plugins::api::StyledText {
+                spans: vec![crate::plugins::api::StyledSpan {
+                    text: "!!".into(),
+                    role: None,
+                }],
+            },
+            reserved_cells: 2,
+            priority: 1,
+        };
+        let rendered = format_entry_with_decoration(&entry, 12, Some(&decoration));
+        assert_eq!(&rendered[..2], "!!");
+        assert_eq!(crate::layout::text::cell_width(&rendered), 12);
     }
 
     fn entry(name: &str, kind: EntryKind, size: u64) -> FileEntry {
@@ -977,6 +1098,21 @@ mod tests {
     }
 
     #[test]
+    fn viewer_uses_the_entire_viewport_without_rendering_the_main_screen() {
+        let mut state = state_with(vec![entry("stale-main.txt", EntryKind::File, 42)], 80, 25);
+        let viewer = crate::model::viewer::ViewerDocument::decode(b"viewer body".to_vec());
+        state.viewer = Some((PathBuf::from("/work/viewer.txt"), viewer));
+        state.screen = Screen::Viewer;
+
+        let output = rendered(&state, 80, 25);
+        assert!(output.starts_with("┌ View: /work/viewer.txt"));
+        assert!(output.contains("viewer body"));
+        assert!(output.contains("Esc Close"));
+        assert!(!output.contains("stale-main.txt"));
+        assert!(!output.contains("Files 1"));
+    }
+
+    #[test]
     fn startup_80x25_snapshot() {
         let mut entries = Vec::new();
         for index in 1..=28 {
@@ -1023,6 +1159,9 @@ mod tests {
             config_path: None,
             persisted_config: crate::config::Config::default(),
             registry: CommandRegistry::default(),
+            plugin_status: Vec::new(),
+            plugin_commands: Vec::new(),
+            plugin_decorations: std::collections::BTreeMap::new(),
         };
         assert_snapshot!(rendered(&state, 80, 25));
     }

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -63,6 +63,10 @@ pub enum Action {
     FileLaunched {
         path: PathBuf,
         result: Result<(), String>,
+    },
+    FileClassified {
+        path: PathBuf,
+        result: Result<bool, String>,
     },
     Tick,
     Move(Direction),
@@ -186,6 +190,7 @@ pub enum Effect {
     LoadDirectory(PathBuf),
     LoadDiskInfo(PathBuf),
     LaunchFile(PathBuf),
+    ClassifyFile(PathBuf),
     Rename {
         from: PathBuf,
         to: PathBuf,
@@ -259,6 +264,9 @@ pub struct AppState {
     pub config_path: Option<PathBuf>,
     pub persisted_config: crate::config::Config,
     pub registry: command_registry::CommandRegistry,
+    pub plugin_status: Vec<crate::plugins::api::StyledText>,
+    pub plugin_commands: Vec<command_registry::PluginCommandHint>,
+    pub plugin_decorations: BTreeMap<String, crate::plugins::api::FileDecoration>,
 }
 
 impl AppState {
@@ -296,6 +304,9 @@ impl AppState {
             config_path: None,
             persisted_config: crate::config::Config::default(),
             registry: command_registry::CommandRegistry::default(),
+            plugin_status: Vec::new(),
+            plugin_commands: Vec::new(),
+            plugin_decorations: BTreeMap::new(),
         }
     }
 
@@ -422,8 +433,9 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                     state.message = Some("Loading directory...".to_string());
                     return vec![Effect::LoadDirectory(entry.path)];
                 }
-                state.message = Some(format!("Opening {}...", entry.display_name()));
-                return vec![Effect::LaunchFile(entry.path)];
+                state.screen = Screen::Progress;
+                state.message = Some(format!("Identifying {}...", entry.display_name()));
+                return vec![Effect::ClassifyFile(entry.path)];
             }
         }
         Action::GoParent => {
@@ -548,6 +560,19 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 Err(error) => format!("Editor failed for {}: {error}", path.display()),
             });
             return vec![Effect::LoadDirectory(state.current_path.clone())];
+        }
+        Action::FileClassified { path, result } => {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            if matches!(result, Ok(true)) {
+                state.message = Some(format!("Opening {name} in editor..."));
+                return vec![Effect::LoadEditor(path)];
+            }
+            state.screen = Screen::Main;
+            state.message = Some(format!("Opening {name}..."));
+            return vec![Effect::LaunchFile(path)];
         }
         Action::DialogCharacter(character) => {
             if let Some(dialog) = &mut state.input_dialog {
@@ -1455,6 +1480,9 @@ mod tests {
             config_path: None,
             persisted_config: crate::config::Config::default(),
             registry: command_registry::CommandRegistry::default(),
+            plugin_status: Vec::new(),
+            plugin_commands: Vec::new(),
+            plugin_decorations: BTreeMap::new(),
         }
     }
 
@@ -1481,6 +1509,60 @@ mod tests {
         assert_eq!(
             effects,
             vec![Effect::LoadDirectory(PathBuf::from("/test/a"))]
+        );
+    }
+
+    #[test]
+    fn open_classifies_regular_files_before_choosing_editor_or_launcher() {
+        let mut app = state();
+        app.entries[0] = entry("notes.txt", EntryKind::File);
+
+        assert_eq!(
+            reduce(&mut app, Action::Open),
+            vec![Effect::ClassifyFile(PathBuf::from("/test/notes.txt"))]
+        );
+        assert_eq!(app.screen, Screen::Progress);
+
+        assert_eq!(
+            reduce(
+                &mut app,
+                Action::FileClassified {
+                    path: PathBuf::from("/test/notes.txt"),
+                    result: Ok(true),
+                }
+            ),
+            vec![Effect::LoadEditor(PathBuf::from("/test/notes.txt"))]
+        );
+
+        let mut app = state();
+        app.entries[0] = entry("image.png", EntryKind::File);
+        assert_eq!(
+            reduce(&mut app, Action::Open),
+            vec![Effect::ClassifyFile(PathBuf::from("/test/image.png"))]
+        );
+        assert_eq!(
+            reduce(
+                &mut app,
+                Action::FileClassified {
+                    path: PathBuf::from("/test/image.png"),
+                    result: Ok(false),
+                }
+            ),
+            vec![Effect::LaunchFile(PathBuf::from("/test/image.png"))]
+        );
+
+        let mut app = state();
+        app.entries[0] = entry("unclassified", EntryKind::File);
+        reduce(&mut app, Action::Open);
+        assert_eq!(
+            reduce(
+                &mut app,
+                Action::FileClassified {
+                    path: PathBuf::from("/test/unclassified"),
+                    result: Err("file unavailable".to_string()),
+                }
+            ),
+            vec![Effect::LaunchFile(PathBuf::from("/test/unclassified"))]
         );
     }
 

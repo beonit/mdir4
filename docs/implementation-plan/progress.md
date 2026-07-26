@@ -9,9 +9,9 @@
 - Rust 도구 체인: stable 1.97.1 설치됨
 - 코드: 기본 디렉터리 탐색이 가능한 Rust/Ratatui 애플리케이션
 - 문서: 원본 요구사항, 요구사항 검토, UI 참고 이미지, 구현 계획 작성됨
-- 현재 자동 기준선: 전체 93 tests passed, Clippy 경고 0
-- 다음 구현 카드: `R1-02 고정 RC Linux/macOS 실제 환경 수동 시험`
-- 후속 문서: Git built-in `G0~G3`, SSH Remote `S0~S3` 작성됨; production 구현 미착수
+- 현재 자동 기준선: 전체 140 tests passed, Clippy 경고 0
+- 다음 구현 카드: `G0-04 Decoration/status/command host 연결`
+- 후속 문서: Git built-in `G0~G3`, SSH Remote `S0~S3` 작성됨; Git generic host G0-01~03 구현 완료
 
 체크박스 `[ ]`에는 `미착수`, `진행`, `외부 대기`가 모두 포함될 수 있다. 실제 실행 순서는
 위의 “다음 구현 카드”가 권위다. `M0-03`은 외부 대기이므로 로컬 에이전트가 반복 실행하지
@@ -25,8 +25,8 @@
 | M1 | 완료 | M2 인계 완료 |
 | M2 | 완료 | M3 인계 완료 |
 | M3 | 완료 | R1 인계 완료 |
-| R1 | 진행 | R1-02 Linux/macOS 실제 환경 수동 시험 |
-| Git G0~G3 | 계획 완료, 구현 미착수 | R1 후 G0-01 |
+| R1 | 진행 | RC 재생성/수동 시험 보류 |
+| Git G0~G3 | G0-01~03 완료, G0 진행 | G0-04 generic contribution host 연결 |
 | SSH Remote S0~S3 | 계획 완료, 구현 미착수 | R1 후 S0-00 |
 
 ## M0
@@ -221,14 +221,17 @@
   - 구현일: 2026-07-25
   - 변경: release profile, cross-platform packager, dependency license inventory,
     Linux/macOS artifact build job, RC record
-  - 로컬 검증: locked release build, macOS arm64 ZIP 구성과 SHA-256, 공통 93-test gate 성공
-  - Linux 검증: Ubuntu 26.04 arm64 Lima VM, rustc/cargo 1.97.1, fmt/Clippy/93 tests/release 성공
+  - 새 RC: source commit `3cc9e12`, macOS package SHA-256 `346130f3...8feb7`, Linux package
+    SHA-256 `6ab9fc7f...fe191`; `Cargo.lock` hash `f29c9459...915d5`.
+  - 로컬 검증: locked release build, macOS arm64 ZIP 구성과 SHA-256, 공통 108-test gate 성공
+  - Linux 검증: Ubuntu 26.04 arm64 Lima VM, rustc/cargo 1.97.1, git archive native release build와
+    ZIP-only PTY smoke 성공
   - artifact-only smoke: Linux/macOS ZIP을 새 임시 디렉터리에 풀어 directory load,
     Ctrl+Q/Enter 정상 종료와 terminal restoration 성공
   - R1-02 진행: macOS 고정 ZIP으로 한글/긴 경로와 10,000개 파일(`Items 10001`)을
     adaptive multi-column 화면에서 로드·확인
-  - 고정 hash: macOS ZIP `f35d2956...34840f`, Linux ZIP `bf9b6685...7664b2`
-  - 상태: 완료; source commit `ee73764`
+  - 고정 hash: macOS ZIP `346130f3...8feb7`, Linux ZIP `6ab9fc7f...fe191`
+  - 상태: 완료; source commit `3cc9e12`
 - [ ] R1-02 고정 RC Linux/macOS 실제 환경 수동 시험
 - [ ] R1-03 v1.0 최종 게이트
 
@@ -268,6 +271,15 @@
 현재 v1 구현 순서에는 포함하지 않는다.
 
 - [ ] G0 Built-in Extension Host
+  - G0-01 완료(2026-07-25): Git을 모르는 Plugin API, opaque owner payload,
+    FakePlugin과 API boundary integration test를 추가했다. 전체 112 tests 및 공통 gate 성공.
+  - G0-02 완료(2026-07-25): static factory 기반 PluginManager, duplicate ID 차단,
+    callback error/panic 격리, faulted late result drop, clean re-enable을 추가했다.
+    전체 117 tests 및 공통 gate 성공.
+  - G0-03 완료(2026-07-25): Core lane과 분리된 bounded plugin-read worker, cancellation,
+    stale generation guard와 shutdown join을 추가했다. 전체 121 tests 및 공통 gate 성공.
+  - 사용자 지시로 RC 재생성은 보류하고 G0-04를 다음 카드로 진행한다. R1-02/R1-03은
+    v1 릴리스 승인 전에 다시 실행할 보류 작업이다.
 - [ ] G1 Read-only Git
 - [ ] G2 Local Git Mutations
 - [ ] G3 Remote Git Operations
@@ -288,8 +300,9 @@
 
 ## 진행 메모
 
-M1~M3 기능은 사용 가능하고 현재 93-test 회귀 기준선이 있다. 첫 commit은
-사용자 승인 전 만들지 않았으며 다음 구현 순서는 `R1-01`이다.
+M1~M3 기능은 사용 가능하고 현재 112-test 회귀 기준선이 있다. R1-01은 source commit
+`3cc9e12`에서 생성했지만 그 뒤 코드가 변경됐으므로 RC artifact 재생성이 필요하다.
+사용자 지시로 지금은 이를 보류하고 `G0-01~03`을 완료했으며 다음 구현 순서는 `G0-04`이다.
 `M0-03` workflow는 로컬 검증됐지만 GitHub 원격 실행 증거가 없어 외부 대기 상태다.
 Linux/macOS launcher와 terminal 조합 증거는 고정 RC를 만든 뒤 R1-02에서 기록한다.
 Git built-in과 SSH Remote 계획은 문서만 추가했으며 현재 v1 순서를 바꾸지 않는다.

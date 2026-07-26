@@ -223,6 +223,9 @@ fn resize_keeps_the_selected_entry_identity() {
         config_path: None,
         persisted_config: mdir4::config::Config::default(),
         registry: mdir4::app::command_registry::CommandRegistry::default(),
+        plugin_status: Vec::new(),
+        plugin_commands: Vec::new(),
+        plugin_decorations: std::collections::BTreeMap::new(),
     };
     let selected = state.selected_entry().unwrap().path.clone();
 

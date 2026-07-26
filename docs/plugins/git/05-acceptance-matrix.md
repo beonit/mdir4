@@ -15,11 +15,11 @@ Git와 SSH Remote는 서로 독립된 단계다. GIT-02 자동 검증은 항상 
 
 | ID | 수용 기준 | 카드 | 자동 증거 | 상태 | Evidence |
 |---|---|---|---|---|---|
-| PLUG-01 | Core model/layout이 Git 타입/backend를 모름 | G0-01~05 | dependency/source boundary | 미착수 | — |
-| PLUG-02 | disabled plugin callback/job/contribution 0 | G0-02,06 | call-count contract | 미착수 | — |
-| PLUG-03 | id/order/key collision이 결정적이고 이유를 표시 | G0-01,02,04 | ordering/collision tests | 미착수 | — |
-| PLUG-04 | callback Err/panic이 Core/다른 plugin을 종료하지 않음 | G0-02 | fault scenarios | 미착수 | — |
-| PLUG-05 | fault re-enable은 새 instance/generation | G0-02 | late-result/re-enable | 미착수 | — |
+| PLUG-01 | Core model/layout이 Git 타입/backend를 모름 | G0-01~05 | dependency/source boundary | 진행 | G0-01: `tests/plugin_api.rs`가 generic API/FakePlugin의 Git dependency 부재와 payload boundary를 검증. G0-02~05 대기. |
+| PLUG-02 | disabled plugin callback/job/contribution 0 | G0-02,06 | call-count contract | 진행 | G0-02: disabled host callback 0과 faulted callback/result drop을 `tests/plugin_manager.rs`로 검증. G0-06 config toggle 대기. |
+| PLUG-03 | id/order/key collision이 결정적이고 이유를 표시 | G0-01,02,04 | ordering/collision tests | 진행 | G0-01: priority+PluginId ordering과 typed duplicate PluginId error. G0-02/04 collision 대기. |
+| PLUG-04 | callback Err/panic이 Core/다른 plugin을 종료하지 않음 | G0-02 | fault scenarios | 완료 | `tests/plugin_manager.rs`: error/panic을 해당 plugin Faulted로 격리하고 다른 plugin contribution을 유지. |
+| PLUG-05 | fault re-enable은 새 instance/generation | G0-02 | late-result/re-enable | 완료 | `tests/plugin_manager.rs`: faulted late result drop, factory 새 instance와 generation 증가를 검증. |
 | PLUG-06 | capacity 16 plugin read lane이 Core mutation과 분리되고 full coalesce/Busy가 non-blocking | G0-03 | injected-capacity/blocked-lane | 미착수 | — |
 | PLUG-07 | 공통 cancel/deadline/OperationId 재사용과 stale/shutdown이 terminal 1회/join 보장 | G0-03 | worker interleavings/type boundary | 미착수 | — |
 | PLUG-08 | reserved cell/extensible style fallback/availability reason/view ownership | G0-04,05 | FakePlugin snapshots | 미착수 | — |

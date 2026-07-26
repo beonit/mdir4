@@ -10,7 +10,7 @@ multi-column navigation experience of Mdir III.
 - One to six adaptive, column-major columns
 - Spatial Up/Down/Left/Right navigation
 - Home/End and Page Up/Page Down
-- Enter to open a directory and Backspace to go to its parent
+- Enter to open a directory, classify a regular file, then edit text or launch other files
 - Space/Insert/Ctrl+A marking
 - R to refresh
 - F1 help
@@ -18,8 +18,10 @@ multi-column navigation experience of Mdir III.
 - Safe warning below the minimum 60×15 terminal size
 - Ctrl+Q confirmation to quit and restore the terminal
 
-Rename, View, Edit, Copy, Move, Delete, MCD, QCD, and Menu are shown but are not
-implemented yet. Pressing Enter on a regular file launches its platform default application.
+Rename, View, Edit, Copy, Move, Delete, MCD, QCD, Menu, configuration, themes, and user keymaps
+are implemented. Enter classifies a regular file with `file --brief --mime-type`: text MIME opens
+in `$EDITOR` (or the built-in editor when `$EDITOR` is unavailable), while other files use the
+platform default application.
 
 ## Run
 
@@ -48,7 +50,7 @@ cargo build --release --locked
 |---|---|
 | `Up / Down` | Move vertically; cross pages at the first/last visible item |
 | `Left / Right` | Move between columns and adjacent pages |
-| `Enter` | Open directory or launch a regular file with the platform default application |
+| `Enter` | Open directory, classify a regular file, then edit text or launch it |
 | `Backspace` | Go to parent directory |
 | `Home / End` | Select first/last item |
 | `PgUp / PgDn` | Select previous/next page |
@@ -57,6 +59,8 @@ cargo build --release --locked
 | `Ctrl+A` | Mark all markable items |
 | `R` | Refresh |
 | `F1` | Open help |
+| `F3` | Open the selected file in the full-screen viewer |
+| `F4` | Edit the selected file with `$EDITOR` or the built-in editor |
 | `Esc` | Close help or clear a message |
 | `Ctrl+Q` | Open quit confirmation |
 

@@ -4,6 +4,15 @@ use crate::{
 };
 
 use super::Action;
+use crate::plugins::api::{CommandAvailability, PluginCommandContribution};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginCommandHint {
+    pub id: String,
+    pub label: String,
+    pub key: Option<KeyChord>,
+    pub availability: CommandAvailability,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CommandId {
@@ -193,6 +202,41 @@ impl Default for CommandRegistry {
 }
 
 impl CommandRegistry {
+    pub fn plugin_command_hints(
+        &self,
+        commands: Vec<PluginCommandContribution>,
+    ) -> Vec<PluginCommandHint> {
+        let mut ids = std::collections::HashSet::new();
+        let mut keys = std::collections::HashSet::new();
+        let mut output = Vec::new();
+        for command in commands {
+            let availability = if !ids.insert(command.id.clone()) {
+                CommandAvailability::Disabled {
+                    reason: "Duplicate plugin command identifier".into(),
+                }
+            } else if let Some(key) = command.default_key
+                && (self
+                    .commands
+                    .iter()
+                    .any(|core| core.enabled && core.key == key)
+                    || !keys.insert(key))
+            {
+                CommandAvailability::Disabled {
+                    reason: "Command key conflicts with an active command".into(),
+                }
+            } else {
+                command.availability.clone()
+            };
+            output.push(PluginCommandHint {
+                id: command.id,
+                label: command.label,
+                key: command.default_key,
+                availability,
+            });
+        }
+        output
+    }
+
     pub fn with_overrides(
         overrides: &std::collections::BTreeMap<String, String>,
     ) -> (Self, Vec<String>) {
@@ -473,5 +517,35 @@ fn action(id: CommandId) -> Action {
         CommandId::ToggleView => Action::ToggleView,
         CommandId::Settings => Action::ShowSettings,
         _ => Action::ClearMessage,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_command_collision_is_disabled_with_an_explanation() {
+        let hints = CommandRegistry::default().plugin_command_hints(vec![
+            PluginCommandContribution {
+                id: "plugin.fake.open".into(),
+                label: "Fake Open".into(),
+                default_key: Some(KeyChord::plain(KeyCode::Function(3))),
+                availability: CommandAvailability::Enabled,
+                priority: 1,
+            },
+            PluginCommandContribution {
+                id: "plugin.fake.other".into(),
+                label: "Fake Other".into(),
+                default_key: Some(KeyChord::plain(KeyCode::Function(3))),
+                availability: CommandAvailability::Enabled,
+                priority: 2,
+            },
+        ]);
+        assert!(
+            hints
+                .iter()
+                .all(|hint| matches!(hint.availability, CommandAvailability::Disabled { .. }))
+        );
     }
 }

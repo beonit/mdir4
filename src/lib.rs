@@ -7,6 +7,7 @@ pub mod layout;
 pub mod mcd;
 pub mod model;
 pub mod operations;
+pub mod plugins;
 pub mod ports;
 pub mod runtime;
 pub mod theme;
