@@ -11,6 +11,7 @@ pub enum InputPurpose {
     SaveAs,
     SearchViewer,
     SearchGitDiff,
+    GitCommitMessage,
     SearchEditor,
     QcdLabel,
     McdSearch,

@@ -194,6 +194,7 @@ pub enum Action {
     GitStatusToggleMark,
     GitStage,
     GitUnstage,
+    ShowGitCommit,
     GitMutationCompleted {
         action: String,
         result: Result<(), String>,
@@ -565,6 +566,16 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 Err(error) => state.message = Some(error),
             }
         }
+        Action::ShowGitCommit => {
+            state.input_dialog = Some(InputDialog::new(
+                "Git Commit",
+                "Commit message",
+                "",
+                InputPurpose::GitCommitMessage,
+                None,
+            ));
+            state.screen = Screen::InputDialog;
+        }
         Action::GitMutationCompleted { action, result } => {
             state.message = Some(match result {
                 Ok(()) => format!("{action} completed."),
@@ -874,6 +885,26 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                         state.screen = Screen::GitDiff;
                         None
                     }
+                    InputPurpose::GitCommitMessage => {
+                        if value.is_empty() {
+                            let mut dialog = dialog;
+                            dialog.error = Some("Commit message cannot be blank.".into());
+                            state.input_dialog = Some(dialog);
+                            None
+                        } else {
+                            state.screen = Screen::GitStatus;
+                            state.message = Some("Commit in progress...".to_string());
+                            return vec![Effect::RunGitMutation {
+                                directory: state.current_path.clone(),
+                                plan: crate::plugins::git::local::MutationPlan {
+                                    kind: crate::plugins::git::local::MutationKind::Commit {
+                                        message: value,
+                                    },
+                                    targets: Vec::new(),
+                                },
+                            }];
+                        }
+                    }
                     InputPurpose::SearchEditor => {
                         if let Some((_, editor)) = &mut state.editor
                             && !editor.find_next(&value)
@@ -944,6 +975,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 .input_dialog
                 .as_ref()
                 .is_some_and(|dialog| dialog.purpose == InputPurpose::SearchGitDiff);
+            let git_commit_dialog = state
+                .input_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.purpose == InputPurpose::GitCommitMessage);
             state.input_dialog = None;
             state.confirm_dialog = None;
             state.screen = if mcd_dialog {
@@ -952,6 +987,8 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 Screen::Qcd
             } else if git_diff_dialog {
                 Screen::GitDiff
+            } else if git_commit_dialog {
+                Screen::GitStatus
             } else if state.editor.is_some() {
                 Screen::Editor
             } else if state.viewer.is_some() {
@@ -1786,6 +1823,24 @@ mod tests {
         reduce(&mut app, Action::CloseOverlay);
         assert_eq!(app.screen, Screen::GitStatus);
         assert!(app.git_diff.is_none());
+    }
+
+    #[test]
+    fn git_commit_requires_a_message_and_dispatches_a_local_mutation() {
+        let mut app = state();
+        app.screen = Screen::GitStatus;
+        reduce(&mut app, Action::ShowGitCommit);
+        reduce(&mut app, Action::ConfirmDialog);
+        assert_eq!(app.screen, Screen::InputDialog);
+        assert!(app.input_dialog.as_ref().unwrap().error.is_some());
+
+        reduce(&mut app, Action::DialogCharacter('a'));
+        assert!(matches!(
+            reduce(&mut app, Action::ConfirmDialog).as_slice(),
+            [Effect::RunGitMutation { plan, .. }]
+                if matches!(plan.kind, crate::plugins::git::local::MutationKind::Commit { .. })
+        ));
+        assert_eq!(app.screen, Screen::GitStatus);
     }
 
     #[test]

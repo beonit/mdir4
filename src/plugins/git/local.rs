@@ -81,6 +81,46 @@ impl GitCliMutationBackend {
                 .to_string())
         }
     }
+
+    fn output(&self, arguments: &[&str]) -> Result<String, String> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&self.worktree)
+            .args(arguments)
+            .output()
+            .map_err(|_| "Git is unavailable.".to_string())?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .next()
+                .filter(|message| !message.trim().is_empty())
+                .unwrap_or("Git mutation failed.")
+                .to_string())
+        }
+    }
+
+    fn ensure_commit_ready(&self) -> Result<(), String> {
+        let staged = Command::new("git")
+            .arg("-C")
+            .arg(&self.worktree)
+            .args(["diff", "--cached", "--quiet"])
+            .status()
+            .map_err(|_| "Git is unavailable.".to_string())?;
+        if staged.code() == Some(0) {
+            return Err("No staged changes to commit.".into());
+        }
+        if !staged.success() && staged.code() != Some(1) {
+            return Err("Could not inspect staged changes.".into());
+        }
+        let name = self.output(&["config", "--get", "user.name"])?;
+        let email = self.output(&["config", "--get", "user.email"])?;
+        if name.is_empty() || email.is_empty() {
+            return Err("Git author name and email are required.".into());
+        }
+        Ok(())
+    }
 }
 
 impl GitMutationBackend for GitCliMutationBackend {
@@ -106,7 +146,10 @@ impl GitMutationBackend for GitCliMutationBackend {
                 arguments.extend(targets);
                 self.run(&arguments)
             }
-            MutationKind::Commit { message } => self.run(&["commit", "-m", message]),
+            MutationKind::Commit { message } => {
+                self.ensure_commit_ready()?;
+                self.run(&["commit", "-m", message])
+            }
         }
     }
 }

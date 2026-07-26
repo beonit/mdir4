@@ -59,6 +59,10 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 ..
             } => Some(Action::GitUnstage),
             KeyChord {
+                code: KeyCode::Function(7),
+                ..
+            } => Some(Action::ShowGitCommit),
+            KeyChord {
                 code: KeyCode::Enter | KeyCode::Function(3),
                 ..
             } => Some(Action::ShowGitDiff),

@@ -86,11 +86,9 @@ fn render_git_status(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(rows).block(
-            dialog_block(" Git Status ").title_bottom(
-                "Enter/F3 Diff  F5 Stage  F6 Unstage  Space Mark  R Refresh  Esc Close",
-            ),
-        ),
+        Paragraph::new(rows).block(dialog_block(" Git Status ").title_bottom(
+            "Enter/F3 Diff  F5 Stage  F6 Unstage  F7 Commit  Space Mark  R Refresh  Esc Close",
+        )),
         viewport,
     );
 }
