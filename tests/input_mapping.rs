@@ -152,6 +152,19 @@ fn git_stash_screen_maps_save_apply_and_drop() {
 }
 
 #[test]
+fn git_branch_screen_maps_the_selected_target_to_rebase() {
+    let registry = CommandRegistry::default();
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::GitBranch,
+            KeyChord::plain(KeyCode::Function(8)),
+            &registry
+        ),
+        Some(Action::GitRebase)
+    ));
+}
+
+#[test]
 fn custom_keymap_updates_display_and_mapping_with_item_fallback() {
     let overrides = BTreeMap::from([
         ("refresh".to_string(), "Ctrl+L".to_string()),

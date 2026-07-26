@@ -205,6 +205,10 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 ..
             } => Some(Action::ShowGitBranchCreate),
             KeyChord {
+                code: KeyCode::Function(8),
+                ..
+            } => Some(Action::GitRebase),
+            KeyChord {
                 code: KeyCode::Enter,
                 ..
             } => Some(Action::GitCheckout),

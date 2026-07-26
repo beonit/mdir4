@@ -120,6 +120,9 @@ pub enum ConfirmOperation {
     GitDropStash {
         reference: String,
     },
+    GitRebase {
+        target: String,
+    },
 }
 
 fn grapheme_count(text: &str) -> usize {

@@ -72,4 +72,14 @@ impl GitCliBranchBackend {
         }
         Self::run(directory, &["switch", name]).map(|_| ())
     }
+
+    pub fn rebase(&self, directory: &Path, target: &str) -> Result<(), String> {
+        let dirty = Self::run(directory, &["status", "--porcelain=v1"])?;
+        if !dirty.is_empty() {
+            return Err(
+                "Cannot rebase while the worktree has changes. Stash or commit them first.".into(),
+            );
+        }
+        Self::run(directory, &["rebase", target]).map(|_| ())
+    }
 }

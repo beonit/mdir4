@@ -220,11 +220,16 @@ pub enum Action {
     },
     GitBranchMove(i32),
     ShowGitBranchCreate,
+    GitRebase,
     GitBranchCreated {
         result: Result<(), String>,
     },
     GitCheckout,
     GitCheckoutCompleted {
+        result: Result<(), String>,
+    },
+    GitRebaseCompleted {
+        target: String,
         result: Result<(), String>,
     },
     GitStashesLoaded {
@@ -319,6 +324,10 @@ pub enum Effect {
     CheckoutGitBranch {
         directory: PathBuf,
         name: String,
+    },
+    RebaseGitBranch {
+        directory: PathBuf,
+        target: String,
     },
     LoadGitStashes(PathBuf),
     ApplyGitStash {
@@ -788,6 +797,40 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.message = Some(match result {
                 Ok(()) => "Branch switched.".into(),
                 Err(error) => format!("Switch branch failed: {error}"),
+            });
+            state.screen = Screen::GitStatus;
+            return vec![Effect::LoadGitStatus(state.current_path.clone())];
+        }
+        Action::GitRebase => {
+            let current = state.git_branches.iter().find(|branch| branch.current);
+            let target = state.git_branches.get(state.git_branch_selected);
+            match (current, target) {
+                (Some(current), Some(target)) if !target.current => {
+                    state.confirm_dialog = Some(ConfirmDialog {
+                        title: "Rebase Git Branch".into(),
+                        message: format!(
+                            "Rebase '{}' onto '{}' ? Resolve any conflicts before continuing.",
+                            current.name, target.name
+                        ),
+                        confirm_label: "Rebase".into(),
+                        operation: ConfirmOperation::GitRebase {
+                            target: target.name.clone(),
+                        },
+                    });
+                    state.screen = Screen::ConfirmDialog;
+                }
+                (Some(_), Some(_)) => {
+                    state.message = Some("Select another branch as the rebase target.".into())
+                }
+                _ => {
+                    state.message = Some("No current branch or rebase target is available.".into())
+                }
+            }
+        }
+        Action::GitRebaseCompleted { target, result } => {
+            state.message = Some(match result {
+                Ok(()) => format!("Rebased onto {target}."),
+                Err(error) => format!("Rebase onto {target} failed: {error}"),
             });
             state.screen = Screen::GitStatus;
             return vec![Effect::LoadGitStatus(state.current_path.clone())];
@@ -1271,6 +1314,14 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                         return vec![Effect::DropGitStash {
                             directory: state.current_path.clone(),
                             reference,
+                        }];
+                    }
+                    ConfirmOperation::GitRebase { target } => {
+                        state.screen = Screen::GitBranch;
+                        state.message = Some(format!("Rebasing onto {target}..."));
+                        return vec![Effect::RebaseGitBranch {
+                            directory: state.current_path.clone(),
+                            target,
                         }];
                     }
                     ConfirmOperation::OverwriteSave { path } => {

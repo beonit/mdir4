@@ -254,3 +254,40 @@ fn cli_branch_backend_lists_current_branch_and_creates_a_valid_branch() {
     assert!(backend.checkout(temp.path(), &original).is_err());
     assert!(validate_branch_name("bad name").is_err());
 }
+
+#[test]
+fn cli_branch_backend_rebases_current_branch_onto_selected_target_and_rejects_dirty_worktrees() {
+    let temp = tempdir().unwrap();
+    git(temp.path(), &["init", "-q"]);
+    git(temp.path(), &["config", "user.name", "Test"]);
+    git(
+        temp.path(),
+        &["config", "user.email", "test@example.invalid"],
+    );
+    fs::write(temp.path().join("note.txt"), "base\n").unwrap();
+    git(temp.path(), &["add", "note.txt"]);
+    git(temp.path(), &["commit", "-qm", "base"]);
+    let backend = GitCliBranchBackend;
+    let base = backend
+        .list(temp.path())
+        .unwrap()
+        .into_iter()
+        .find(|branch| branch.current)
+        .unwrap()
+        .name;
+    backend.create(temp.path(), "feature/rebase").unwrap();
+    backend.checkout(temp.path(), "feature/rebase").unwrap();
+    fs::write(temp.path().join("feature.txt"), "feature\n").unwrap();
+    git(temp.path(), &["add", "feature.txt"]);
+    git(temp.path(), &["commit", "-qm", "feature"]);
+    backend.checkout(temp.path(), &base).unwrap();
+    fs::write(temp.path().join("base.txt"), "base update\n").unwrap();
+    git(temp.path(), &["add", "base.txt"]);
+    git(temp.path(), &["commit", "-qm", "base update"]);
+    backend.checkout(temp.path(), "feature/rebase").unwrap();
+    backend.rebase(temp.path(), &base).unwrap();
+    assert!(temp.path().join("base.txt").exists());
+    assert!(temp.path().join("feature.txt").exists());
+    fs::write(temp.path().join("dirty.txt"), "dirty\n").unwrap();
+    assert!(backend.rebase(temp.path(), &base).is_err());
+}

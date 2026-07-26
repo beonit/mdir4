@@ -465,6 +465,10 @@ impl EffectWorker {
                         let result = GitCliBranchBackend.checkout(&directory, &name);
                         Action::GitCheckoutCompleted { result }
                     }
+                    Effect::RebaseGitBranch { directory, target } => {
+                        let result = GitCliBranchBackend.rebase(&directory, &target);
+                        Action::GitRebaseCompleted { target, result }
+                    }
                     Effect::LoadGitStashes(directory) => {
                         let result = GitCliStashBackend.list(&directory);
                         Action::GitStashesLoaded { result }
