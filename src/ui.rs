@@ -189,23 +189,53 @@ fn render_qcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
 
 fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
     let Some(tree) = &state.mcd else { return };
+    frame.render_widget(Clear, viewport);
     frame.render_widget(
         Block::default().style(palette::role(ThemeRole::McdBackground)),
         viewport,
     );
-    let (start, rows) = tree.visible_window(viewport.height.saturating_sub(5) as usize);
-    let mut lines = vec![Line::raw("Mdir4 Change Directory")];
-    if start > 0 {
-        lines.push(Line::raw("              ▲ more above"));
-    }
+    let header = Rect::new(viewport.x, viewport.y, viewport.width, 1);
+    let body = Rect::new(
+        viewport.x,
+        viewport.y.saturating_add(1),
+        viewport.width,
+        viewport.height.saturating_sub(2),
+    );
+    let footer = Rect::new(
+        viewport.x,
+        viewport.y.saturating_add(viewport.height.saturating_sub(1)),
+        viewport.width,
+        1,
+    );
+    let all_rows = tree.visible_rows();
+    let (start, rows) = tree.visible_window(body.height as usize);
+    let end = start + rows.len();
+    let title = format!(
+        "Mdir4 Change Directory  [{}-{}/{}]",
+        if all_rows.is_empty() { 0 } else { start + 1 },
+        end,
+        all_rows.len()
+    );
+    frame.render_widget(
+        Paragraph::new(title).style(palette::role(ThemeRole::McdBackground)),
+        header,
+    );
+    let mut lines = Vec::with_capacity(rows.len());
     for (index, row) in rows.iter().enumerate() {
         let node = tree.node(row.id).unwrap();
         let prefix = row
             .connector_continues
             .iter()
+            .take(row.connector_continues.len().saturating_sub(1))
             .map(|continues| if *continues { "│  " } else { "   " })
             .collect::<String>();
-        let branch = if node.depth == 0 { "" } else { "├─ " };
+        let branch = if node.depth == 0 {
+            ""
+        } else if row.connector_continues.last().copied().unwrap_or(false) {
+            "├─ "
+        } else {
+            "└─ "
+        };
         let marker = match node.state {
             crate::mcd::tree::LoadState::Loading => " …",
             crate::mcd::tree::LoadState::Error(_) => " !",
@@ -230,13 +260,18 @@ fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         );
         lines.push(Line::raw(line));
     }
-    if start + rows.len() < tree.visible_rows().len() {
-        lines.push(Line::raw("              ▼ more below"));
-    }
-    lines.push(Line::raw("F2 Rescan  F3 Drives  Enter Open  Esc Cancel"));
     frame.render_widget(
         Paragraph::new(lines).style(palette::role(ThemeRole::McdBackground)),
-        viewport,
+        body,
+    );
+    let above = if start > 0 { "▲ " } else { "  " };
+    let below = if end < all_rows.len() { "▼ " } else { "  " };
+    frame.render_widget(
+        Paragraph::new(format!(
+            "{above}{below}PgUp/PgDn  F2 Rescan  F3 Drives  Enter Open  Esc Cancel"
+        ))
+        .style(palette::role(ThemeRole::McdBackground)),
+        footer,
     );
 }
 
@@ -945,6 +980,38 @@ mod tests {
         let settings = rendered(&state, 100, 30);
         assert!(settings.contains("Settings Preview"));
         assert!(settings.contains("Keymap"));
+    }
+
+    #[test]
+    fn mcd_clears_main_screen_and_keeps_scrolled_selection_visible() {
+        let mut state = state_with(vec![entry("stale-main.txt", EntryKind::File, 42)], 80, 25);
+        let mut tree = crate::mcd::tree::DirectoryTree::default();
+        let root = tree.add_root(PathBuf::from("/"));
+        tree.set_children(
+            root,
+            (0..30)
+                .map(|index| PathBuf::from(format!("/item-{index:02}")))
+                .collect(),
+        );
+        tree.expand();
+        tree.page_move(4, 6);
+        let selected_name = tree
+            .selected_node()
+            .unwrap()
+            .path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        state.mcd = Some(tree);
+        state.screen = Screen::Mcd;
+
+        let output = rendered(&state, 80, 25);
+        assert!(output.contains("Mdir4 Change Directory"));
+        assert!(output.contains(&format!("> ├─ {selected_name}")));
+        assert!(output.contains("PgUp/PgDn"));
+        assert!(!output.contains("stale-main.txt"));
+        assert!(!output.contains("Files 1"));
     }
 
     #[test]
