@@ -9,6 +9,7 @@ use crate::{
     },
 };
 
+pub mod branch;
 pub mod decoration;
 pub mod fake_read_backend;
 pub mod history;

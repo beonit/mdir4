@@ -20,6 +20,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use thiserror::Error;
 
 use crate::plugins::git::{
+    branch::GitCliBranchBackend,
     history::{GitCliHistoryBackend, GitHistoryBackend},
     local::{GitCliMutationBackend, GitMutationBackend},
     model::GitReadBackend,
@@ -450,6 +451,14 @@ impl EffectWorker {
                     Effect::LoadGitLogDetail { directory, hash } => {
                         let result = GitCliHistoryBackend.detail(&directory, &hash);
                         Action::GitLogDetailLoaded { result }
+                    }
+                    Effect::LoadGitBranches(directory) => {
+                        let result = GitCliBranchBackend.list(&directory);
+                        Action::GitBranchesLoaded { result }
+                    }
+                    Effect::CreateGitBranch { directory, name } => {
+                        let result = GitCliBranchBackend.create(&directory, &name);
+                        Action::GitBranchCreated { result }
                     }
                     Effect::RunGitMutation { directory, plan } => {
                         let action = match plan.kind {
@@ -1024,6 +1033,8 @@ mod tests {
             git_log: Vec::new(),
             git_log_selected: 0,
             git_log_detail: None,
+            git_branches: Vec::new(),
+            git_branch_selected: 0,
         }
     }
 

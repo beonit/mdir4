@@ -67,6 +67,10 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 ..
             } => Some(Action::ShowGitLog),
             KeyChord {
+                code: KeyCode::Function(11),
+                ..
+            } => Some(Action::ShowGitBranches),
+            KeyChord {
                 code: KeyCode::Enter | KeyCode::Function(3),
                 ..
             } => Some(Action::ShowGitDiff),
@@ -144,6 +148,26 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 code: KeyCode::Escape,
                 ..
             } => Some(Action::CloseOverlay),
+            _ => None,
+        };
+    }
+    if screen == Screen::GitBranch {
+        return match chord {
+            KeyChord {
+                code: KeyCode::Escape,
+                ..
+            } => Some(Action::CloseOverlay),
+            KeyChord {
+                code: KeyCode::Up, ..
+            } => Some(Action::GitBranchMove(-1)),
+            KeyChord {
+                code: KeyCode::Down,
+                ..
+            } => Some(Action::GitBranchMove(1)),
+            KeyChord {
+                code: KeyCode::Function(7),
+                ..
+            } => Some(Action::ShowGitBranchCreate),
             _ => None,
         };
     }

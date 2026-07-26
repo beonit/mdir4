@@ -53,6 +53,7 @@ pub enum Screen {
     GitDiff,
     GitLog,
     GitLogDetail,
+    GitBranch,
 }
 
 #[derive(Debug)]
@@ -206,6 +207,15 @@ pub enum Action {
     GitLogDetailLoaded {
         result: Result<String, String>,
     },
+    ShowGitBranches,
+    GitBranchesLoaded {
+        result: Result<Vec<crate::plugins::git::branch::GitBranch>, String>,
+    },
+    GitBranchMove(i32),
+    ShowGitBranchCreate,
+    GitBranchCreated {
+        result: Result<(), String>,
+    },
     GitMutationCompleted {
         action: String,
         result: Result<(), String>,
@@ -281,6 +291,11 @@ pub enum Effect {
         directory: PathBuf,
         hash: String,
     },
+    LoadGitBranches(PathBuf),
+    CreateGitBranch {
+        directory: PathBuf,
+        name: String,
+    },
     RunGitMutation {
         directory: PathBuf,
         plan: crate::plugins::git::local::MutationPlan,
@@ -329,6 +344,8 @@ pub struct AppState {
     pub git_log: Vec<crate::plugins::git::history::GitLogEntry>,
     pub git_log_selected: usize,
     pub git_log_detail: Option<ViewerState>,
+    pub git_branches: Vec<crate::plugins::git::branch::GitBranch>,
+    pub git_branch_selected: usize,
 }
 
 impl AppState {
@@ -374,6 +391,8 @@ impl AppState {
             git_log: Vec::new(),
             git_log_selected: 0,
             git_log_detail: None,
+            git_branches: Vec::new(),
+            git_branch_selected: 0,
         }
     }
 
@@ -603,6 +622,45 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.git_log_selected = 0;
             state.screen = Screen::GitLog;
             return vec![Effect::LoadGitLog(state.current_path.clone())];
+        }
+        Action::ShowGitBranches => {
+            state.git_branches.clear();
+            state.git_branch_selected = 0;
+            state.screen = Screen::GitBranch;
+            return vec![Effect::LoadGitBranches(state.current_path.clone())];
+        }
+        Action::GitBranchesLoaded { result } => match result {
+            Ok(branches) => {
+                state.git_branches = branches;
+                state.git_branch_selected = state
+                    .git_branch_selected
+                    .min(state.git_branches.len().saturating_sub(1));
+            }
+            Err(error) => state.message = Some(error),
+        },
+        Action::GitBranchMove(delta) => {
+            state.git_branch_selected = state
+                .git_branch_selected
+                .saturating_add_signed(delta as isize)
+                .min(state.git_branches.len().saturating_sub(1));
+        }
+        Action::ShowGitBranchCreate => {
+            state.input_dialog = Some(InputDialog::new(
+                "Create Git Branch",
+                "Branch name",
+                "",
+                InputPurpose::GitBranchName,
+                None,
+            ));
+            state.screen = Screen::InputDialog;
+        }
+        Action::GitBranchCreated { result } => {
+            state.message = Some(match result {
+                Ok(()) => "Git branch created.".into(),
+                Err(error) => format!("Create branch failed: {error}"),
+            });
+            state.screen = Screen::GitBranch;
+            return vec![Effect::LoadGitBranches(state.current_path.clone())];
         }
         Action::GitLogLoaded { result } => match result {
             Ok(entries) => {
@@ -965,6 +1023,23 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                             }];
                         }
                     }
+                    InputPurpose::GitBranchName => {
+                        match crate::plugins::git::branch::validate_branch_name(&value) {
+                            Ok(()) => {
+                                state.screen = Screen::GitBranch;
+                                return vec![Effect::CreateGitBranch {
+                                    directory: state.current_path.clone(),
+                                    name: value,
+                                }];
+                            }
+                            Err(error) => {
+                                let mut dialog = dialog;
+                                dialog.error = Some(error);
+                                state.input_dialog = Some(dialog);
+                                None
+                            }
+                        }
+                    }
                     InputPurpose::SearchEditor => {
                         if let Some((_, editor)) = &mut state.editor
                             && !editor.find_next(&value)
@@ -1039,6 +1114,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 .input_dialog
                 .as_ref()
                 .is_some_and(|dialog| dialog.purpose == InputPurpose::GitCommitMessage);
+            let git_branch_dialog = state
+                .input_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.purpose == InputPurpose::GitBranchName);
             state.input_dialog = None;
             state.confirm_dialog = None;
             state.screen = if mcd_dialog {
@@ -1049,6 +1128,8 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 Screen::GitDiff
             } else if git_commit_dialog {
                 Screen::GitStatus
+            } else if git_branch_dialog {
+                Screen::GitBranch
             } else if state.editor.is_some() {
                 Screen::Editor
             } else if state.viewer.is_some() {
@@ -1661,6 +1742,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 state.git_log.clear();
                 state.screen = Screen::GitStatus;
                 return Vec::new();
+            } else if state.screen == Screen::GitBranch {
+                state.git_branches.clear();
+                state.screen = Screen::GitStatus;
+                return Vec::new();
             } else if state.screen == Screen::GitDiff {
                 state.git_diff = None;
                 state.screen = Screen::GitStatus;
@@ -1807,6 +1892,8 @@ mod tests {
             git_log: Vec::new(),
             git_log_selected: 0,
             git_log_detail: None,
+            git_branches: Vec::new(),
+            git_branch_selected: 0,
         }
     }
 

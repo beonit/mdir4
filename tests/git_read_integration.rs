@@ -1,4 +1,5 @@
 use mdir4::plugins::git::{
+    branch::{GitCliBranchBackend, validate_branch_name},
     history::{GitCliHistoryBackend, GitHistoryBackend},
     local::{GitCliMutationBackend, GitMutationBackend, MutationKind, plan_targets},
     model::{DiffTarget, GitReadBackend},
@@ -143,4 +144,24 @@ fn cli_history_backend_lists_commits_and_reads_the_selected_detail() {
     let detail = backend.detail(temp.path(), &entries[0].hash).unwrap();
     assert!(detail.contains("second subject"));
     assert!(detail.contains("Test User"));
+}
+
+#[test]
+fn cli_branch_backend_lists_current_branch_and_creates_a_valid_branch() {
+    let temp = tempdir().unwrap();
+    git(temp.path(), &["init", "-q"]);
+    git(temp.path(), &["config", "user.name", "Test"]);
+    git(
+        temp.path(),
+        &["config", "user.email", "test@example.invalid"],
+    );
+    fs::write(temp.path().join("note.txt"), "one\n").unwrap();
+    git(temp.path(), &["add", "note.txt"]);
+    git(temp.path(), &["commit", "-qm", "initial"]);
+    let backend = GitCliBranchBackend;
+    backend.create(temp.path(), "feature/demo").unwrap();
+    let branches = backend.list(temp.path()).unwrap();
+    assert!(branches.iter().any(|branch| branch.name == "feature/demo"));
+    assert_eq!(branches.iter().filter(|branch| branch.current).count(), 1);
+    assert!(validate_branch_name("bad name").is_err());
 }

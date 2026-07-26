@@ -60,6 +60,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         Screen::Settings => render_settings(frame, state, metrics.viewport),
         Screen::GitStatus => render_git_status(frame, state, metrics.viewport),
         Screen::GitLog => render_git_log(frame, state, metrics.viewport),
+        Screen::GitBranch => render_git_branches(frame, state, metrics.viewport),
         Screen::Main => {}
     }
 }
@@ -92,7 +93,7 @@ fn render_git_status(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         .collect();
     frame.render_widget(
         Paragraph::new(rows).block(dialog_block(" Git Status ").title_bottom(
-                "Enter/F3 Diff  F5 Stage  F6 Unstage  F7 Commit  F10 Log  Space Mark  R Refresh  Esc Close",
+                "Enter/F3 Diff  F5 Stage  F6 Unstage  F7 Commit  F10 Log  F11 Branch  Space Mark  R Refresh  Esc Close",
         )),
         viewport,
     );
@@ -147,6 +148,33 @@ fn render_git_log_detail(frame: &mut Frame<'_>, viewport: Rect, state: &AppState
         return;
     };
     render_document_viewer(frame, viewport, detail, " Git Commit Detail ", "Esc Back");
+}
+
+fn render_git_branches(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
+    frame.render_widget(Clear, viewport);
+    let rows: Vec<_> = state
+        .git_branches
+        .iter()
+        .enumerate()
+        .map(|(index, branch)| {
+            Line::raw(format!(
+                "{} {} {}",
+                if index == state.git_branch_selected {
+                    ">"
+                } else {
+                    " "
+                },
+                if branch.current { "*" } else { " " },
+                branch.name
+            ))
+        })
+        .collect();
+    frame.render_widget(
+        Paragraph::new(rows).block(
+            dialog_block(" Git Branches ").title_bottom("Up/Down Move  F7 Create  Esc Back"),
+        ),
+        viewport,
+    );
 }
 
 fn render_menu(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
@@ -1109,6 +1137,8 @@ mod tests {
             git_log: Vec::new(),
             git_log_selected: 0,
             git_log_detail: None,
+            git_branches: Vec::new(),
+            git_branch_selected: 0,
         }
     }
 
@@ -1299,6 +1329,8 @@ mod tests {
             git_log: Vec::new(),
             git_log_selected: 0,
             git_log_detail: None,
+            git_branches: Vec::new(),
+            git_branch_selected: 0,
         };
         assert_snapshot!(rendered(&state, 80, 25));
     }

@@ -12,6 +12,7 @@ pub enum InputPurpose {
     SearchViewer,
     SearchGitDiff,
     GitCommitMessage,
+    GitBranchName,
     SearchEditor,
     QcdLabel,
     McdSearch,
