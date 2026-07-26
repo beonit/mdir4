@@ -433,7 +433,10 @@ cargo test --all-targets --all-features --locked
   force push 기본 금지, `Queued→Resolving/Auth→Transferring→Applying→Terminal`, auth 뒤/첫
   Transferring 전 lease 획득과 Terminal 반환, interrupted clone cleanup.
 - 완료: threat/recovery/backend capability/test fixture 문서의 미결정 0.
-- 진행: [ ] threat model [ ] auth 결정 [ ] cancel/recovery [ ] backend 검증 [ ] 승인 증거
+- 진행: [x] threat model [x] auth 결정 [x] cancel/recovery [x] backend 검증 [x] 승인 증거
+  - 증거(2026-07-26): `adr-remote-operations.md`에 OS credential helper/SSH agent 전용,
+    raw secret 금지, strict host-key/TLS, force push 금지, ff-only Pull, transport phase/lease,
+    cancellation 및 clone cleanup 정책을 고정했다.
 
 ## G3-01 remote metadata와 cached ahead/behind
 

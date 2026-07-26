@@ -79,7 +79,7 @@ Git와 SSH Remote는 서로 독립된 단계다. GIT-02 자동 검증은 항상 
 
 | ID | 수용 기준 | 카드 | 자동 증거 | 수동 증거 | 상태 | Evidence |
 |---|---|---|---|---|---|---|
-| GITNET-01 | auth/transport/conflict gate의 미결정 0 | G3-00 | doc/ADR check | 보안 검토 | 미착수 | — |
+| GITNET-01 | auth/transport/conflict gate의 미결정 0 | G3-00 | doc/ADR check | 보안 검토 | 완료 | `adr-remote-operations.md` (2026-07-26) |
 | GITNET-02 | ahead/behind를 render/cursor에서 계산하지 않음 | G3-01 | call count | 없음 | 미착수 | — |
 | GITNET-03 | network 전에 helper/agent/host-key/redaction 및 bounded Git Transport lane 완성 | G3-02 | Fake transport/worker suite | helper/agent | 미착수 | — |
 | GITNET-04 | raw secret가 API/state/config/log/snapshot에 없음 | G3-00,02 | source/redaction scan | credential 시험 | 미착수 | — |
