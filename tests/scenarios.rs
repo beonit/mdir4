@@ -97,6 +97,7 @@ fn ten_thousand_entry_navigation_and_render_smoke() {
         plugin_commands: Vec::new(),
         plugin_decorations: std::collections::BTreeMap::new(),
         git_status_view: None,
+        git_diff: None,
     };
     let started = Instant::now();
     app::reduce(&mut state, Action::End);

@@ -16,6 +16,75 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 code: KeyCode::Escape,
                 ..
             } => Some(Action::CloseOverlay),
+            KeyChord {
+                code: KeyCode::Up, ..
+            } => Some(Action::GitStatusMove(-1)),
+            KeyChord {
+                code: KeyCode::Down,
+                ..
+            } => Some(Action::GitStatusMove(1)),
+            KeyChord {
+                code: KeyCode::PageUp,
+                ..
+            } => Some(Action::GitStatusPage(-1)),
+            KeyChord {
+                code: KeyCode::PageDown,
+                ..
+            } => Some(Action::GitStatusPage(1)),
+            KeyChord {
+                code: KeyCode::Home,
+                ..
+            } => Some(Action::GitStatusHome),
+            KeyChord {
+                code: KeyCode::End, ..
+            } => Some(Action::GitStatusEnd),
+            KeyChord {
+                code: KeyCode::Character(' '),
+                control: false,
+                alt: false,
+                ..
+            } => Some(Action::GitStatusToggleMark),
+            KeyChord {
+                code: KeyCode::Character('r' | 'R'),
+                control: false,
+                alt: false,
+                ..
+            } => Some(Action::RefreshGitStatus),
+            KeyChord {
+                code: KeyCode::Enter | KeyCode::Function(3),
+                ..
+            } => Some(Action::ShowGitDiff),
+            _ => None,
+        };
+    }
+    if screen == Screen::GitDiff {
+        return match chord {
+            KeyChord {
+                code: KeyCode::Escape,
+                ..
+            } => Some(Action::CloseOverlay),
+            KeyChord {
+                code: KeyCode::Up, ..
+            } => Some(Action::GitDiffLine(-1)),
+            KeyChord {
+                code: KeyCode::Down,
+                ..
+            } => Some(Action::GitDiffLine(1)),
+            KeyChord {
+                code: KeyCode::PageUp,
+                ..
+            } => Some(Action::GitDiffPage(-1)),
+            KeyChord {
+                code: KeyCode::PageDown,
+                ..
+            } => Some(Action::GitDiffPage(1)),
+            KeyChord {
+                code: KeyCode::Home,
+                ..
+            } => Some(Action::GitDiffHome),
+            KeyChord {
+                code: KeyCode::End, ..
+            } => Some(Action::GitDiffEnd),
             _ => None,
         };
     }

@@ -419,6 +419,25 @@ impl EffectWorker {
                                 });
                         Action::GitStatusLoaded { result }
                     }
+                    Effect::LoadGitDiff { directory, path } => {
+                        let backend = GitCliReadBackend;
+                        let display_path = path.as_path().to_path_buf();
+                        let result =
+                            backend
+                                .discover(&directory)
+                                .and_then(|repository| match repository {
+                                    Some(repository) => backend.diff(
+                                        &repository,
+                                        &path,
+                                        crate::plugins::git::model::DiffTarget::Combined,
+                                    ),
+                                    None => Err("Git repository not found.".into()),
+                                });
+                        Action::GitDiffLoaded {
+                            path: display_path,
+                            result,
+                        }
+                    }
                     Effect::SaveConfig { path, config } => {
                         let result = crate::config::save_atomic(&path, &config)
                             .map(|()| OperationSummary::default())
@@ -978,6 +997,7 @@ mod tests {
             plugin_commands: Vec::new(),
             plugin_decorations: std::collections::BTreeMap::new(),
             git_status_view: None,
+            git_diff: None,
         }
     }
 

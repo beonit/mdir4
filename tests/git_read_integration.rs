@@ -18,7 +18,7 @@ fn git(directory: &std::path::Path, args: &[&str]) {
 }
 
 #[test]
-fn cli_read_backend_discovers_status_and_unstaged_diff_without_mutating_repo() {
+fn cli_read_backend_discovers_status_and_reads_unstaged_and_combined_diffs_without_mutating_repo() {
     let temp = tempdir().unwrap();
     git(temp.path(), &["init", "-q"]);
     git(temp.path(), &["config", "user.name", "Test"]);
@@ -39,5 +39,11 @@ fn cli_read_backend_discovers_status_and_unstaged_diff_without_mutating_repo() {
             .diff(&repo, &rows[0].path, DiffTarget::Unstaged)
             .unwrap()
             .contains("-one")
+    );
+    assert!(
+        backend
+            .diff(&repo, &rows[0].path, DiffTarget::Combined)
+            .unwrap()
+            .contains("+two")
     );
 }

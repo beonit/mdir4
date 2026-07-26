@@ -56,8 +56,8 @@ impl GitPlugin {
             label: "Git Status".into(),
             default_key: Some(KeyChord {
                 code: KeyCode::Character('g'),
-                control: false,
-                alt: true,
+                control: true,
+                alt: false,
                 shift: false,
             }),
             availability: if self.local {

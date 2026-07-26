@@ -88,8 +88,10 @@ impl GitReadBackend for GitCliReadBackend {
         target: DiffTarget,
     ) -> Result<String, String> {
         let mut args = vec!["diff", "--no-ext-diff"];
-        if matches!(target, DiffTarget::Staged) {
-            args.push("--cached");
+        match target {
+            DiffTarget::Staged => args.push("--cached"),
+            DiffTarget::Combined => args.push("HEAD"),
+            DiffTarget::Unstaged => {}
         }
         let path = path
             .as_path()

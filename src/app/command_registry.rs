@@ -187,8 +187,8 @@ impl Default for CommandRegistry {
                 Id::GitStatus,
                 KeyChord {
                     code: Key::Character('g'),
-                    control: false,
-                    alt: true,
+                    control: true,
+                    alt: false,
                     shift: false,
                 },
                 "Git Status",

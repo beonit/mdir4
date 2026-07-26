@@ -27,6 +27,10 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         render_viewer(frame, metrics.viewport, state);
         return;
     }
+    if state.screen == Screen::GitDiff {
+        render_git_diff(frame, metrics.viewport, state);
+        return;
+    }
 
     render_main(frame, state, metrics);
     match state.screen {
@@ -39,7 +43,9 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         Screen::QuitConfirm => render_quit_confirmation(frame, metrics.viewport),
         Screen::InputDialog => render_input_dialog(frame, state, metrics.viewport),
         Screen::ConfirmDialog => render_confirm_dialog(frame, state, metrics.viewport),
-        Screen::Viewer => unreachable!("viewer renders before the main screen"),
+        Screen::Viewer | Screen::GitDiff => {
+            unreachable!("full-screen document renders before the main screen")
+        }
         Screen::Editor => render_editor(frame, state, metrics.viewport),
         Screen::Progress => render_progress(frame, state, metrics.viewport),
         Screen::DrivePicker => render_drive_picker(frame, state, metrics.viewport),
@@ -64,16 +70,41 @@ fn render_git_status(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         .enumerate()
         .map(|(index, row)| {
             Line::raw(format!(
-                "{} {} {}",
+                "{}{} {} {}",
                 if index == view.selected { ">" } else { " " },
+                if view
+                    .marked
+                    .contains(&row.path.as_path().display().to_string())
+                {
+                    "*"
+                } else {
+                    " "
+                },
                 crate::plugins::git::decoration::prefix(row.status),
                 row.path.as_path().display()
             ))
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(rows).block(dialog_block(" Git Status ")),
+        Paragraph::new(rows).block(
+            dialog_block(" Git Status ")
+                .title_bottom("Enter/F3 Diff  Up/Down Move  Space Mark  R Refresh  Esc Close"),
+        ),
         viewport,
+    );
+}
+
+fn render_git_diff(frame: &mut Frame<'_>, viewport: Rect, state: &AppState) {
+    frame.render_widget(Clear, viewport);
+    let Some((path, viewer)) = &state.git_diff else {
+        return;
+    };
+    render_document_viewer(
+        frame,
+        viewport,
+        viewer,
+        &format!(" Git Diff: {} ", path.display()),
+        "Esc Back  Up/Down Scroll  PgUp/PgDn Page",
     );
 }
 
@@ -455,13 +486,29 @@ fn render_confirm_dialog(frame: &mut Frame<'_>, state: &AppState, viewport: Rect
 }
 
 fn render_viewer(frame: &mut Frame<'_>, viewport: Rect, state: &AppState) {
-    use crate::model::viewer::ViewerState;
     let area = viewport;
     frame.render_widget(Clear, area);
     let (path, viewer) = match &state.viewer {
         Some(value) => value,
         None => return,
     };
+    render_document_viewer(
+        frame,
+        area,
+        viewer,
+        &format!(" View: {} ", path.display()),
+        "Esc Close  Up/Down Scroll  PgUp/PgDn Page  Ctrl+F Find  F3 Next",
+    );
+}
+
+fn render_document_viewer(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    viewer: &crate::model::viewer::ViewerState,
+    title: &str,
+    help: &str,
+) {
+    use crate::model::viewer::ViewerState;
     let body_height = area.height.saturating_sub(3) as usize;
     let mut lines: Vec<Line<'_>> = match viewer {
         ViewerState::Loading { .. } => vec![Line::raw("Loading...")],
@@ -477,13 +524,8 @@ fn render_viewer(frame: &mut Frame<'_>, viewport: Rect, state: &AppState) {
             })
             .collect(),
     };
-    lines.push(Line::raw(
-        "Esc Close  Up/Down Scroll  PgUp/PgDn Page  Ctrl+F Find  F3 Next",
-    ));
-    frame.render_widget(
-        Paragraph::new(lines).block(dialog_block(&format!(" View: {} ", path.display()))),
-        area,
-    );
+    lines.push(Line::raw(help));
+    frame.render_widget(Paragraph::new(lines).block(dialog_block(title)), area);
 }
 
 fn render_editor(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
@@ -1022,6 +1064,7 @@ mod tests {
             plugin_commands: Vec::new(),
             plugin_decorations: std::collections::BTreeMap::new(),
             git_status_view: None,
+            git_diff: None,
         }
     }
 
@@ -1208,6 +1251,7 @@ mod tests {
             plugin_commands: Vec::new(),
             plugin_decorations: std::collections::BTreeMap::new(),
             git_status_view: None,
+            git_diff: None,
         };
         assert_snapshot!(rendered(&state, 80, 25));
     }

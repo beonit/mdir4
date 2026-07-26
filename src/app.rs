@@ -50,6 +50,7 @@ pub enum Screen {
     Menu,
     Settings,
     GitStatus,
+    GitDiff,
 }
 
 #[derive(Debug)]
@@ -182,9 +183,24 @@ pub enum Action {
     MenuOpen,
     ShowSettings,
     ShowGitStatus,
+    RefreshGitStatus,
     GitStatusLoaded {
         result: Result<Vec<crate::plugins::git::model::GitStatusRow>, String>,
     },
+    GitStatusMove(i32),
+    GitStatusPage(i32),
+    GitStatusHome,
+    GitStatusEnd,
+    GitStatusToggleMark,
+    ShowGitDiff,
+    GitDiffLoaded {
+        path: PathBuf,
+        result: Result<String, String>,
+    },
+    GitDiffLine(i32),
+    GitDiffPage(i32),
+    GitDiffHome,
+    GitDiffEnd,
     SettingsMove(i32),
     SettingsChange(i32),
     ApplySettings,
@@ -234,6 +250,10 @@ pub enum Effect {
         config: crate::config::Config,
     },
     LoadGitStatus(PathBuf),
+    LoadGitDiff {
+        directory: PathBuf,
+        path: crate::plugins::git::model::RepoRelativePath,
+    },
 }
 
 #[derive(Debug)]
@@ -274,6 +294,7 @@ pub struct AppState {
     pub plugin_commands: Vec<command_registry::PluginCommandHint>,
     pub plugin_decorations: BTreeMap<String, crate::plugins::api::FileDecoration>,
     pub git_status_view: Option<crate::plugins::git::status_view::GitStatusViewState>,
+    pub git_diff: Option<(PathBuf, ViewerState)>,
 }
 
 impl AppState {
@@ -315,6 +336,7 @@ impl AppState {
             plugin_commands: Vec::new(),
             plugin_decorations: BTreeMap::new(),
             git_status_view: None,
+            git_diff: None,
         }
     }
 
@@ -462,10 +484,99 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.screen = Screen::GitStatus;
             return vec![Effect::LoadGitStatus(state.current_path.clone())];
         }
+        Action::RefreshGitStatus => {
+            if state.screen == Screen::GitStatus {
+                state.message = Some("Refreshing Git status...".to_string());
+                return vec![Effect::LoadGitStatus(state.current_path.clone())];
+            }
+        }
         Action::GitStatusLoaded { result } => match result {
             Ok(rows) => state.git_status_view.get_or_insert_default().refresh(rows),
             Err(message) => state.message = Some(message),
         },
+        Action::GitStatusMove(delta) => {
+            if let Some(view) = &mut state.git_status_view {
+                view.move_selection(delta);
+            }
+        }
+        Action::GitStatusPage(delta) => {
+            if let Some(view) = &mut state.git_status_view {
+                view.page_selection(delta, state.viewport.height.saturating_sub(4) as usize);
+            }
+        }
+        Action::GitStatusHome => {
+            if let Some(view) = &mut state.git_status_view {
+                view.select_home();
+            }
+        }
+        Action::GitStatusEnd => {
+            if let Some(view) = &mut state.git_status_view {
+                view.select_end();
+            }
+        }
+        Action::GitStatusToggleMark => {
+            if let Some(view) = &mut state.git_status_view {
+                view.toggle_mark();
+            }
+        }
+        Action::ShowGitDiff => {
+            let path = state
+                .git_status_view
+                .as_ref()
+                .and_then(|view| view.rows.get(view.selected))
+                .map(|row| row.path.clone());
+            if let Some(path) = path {
+                state.git_diff = Some((
+                    path.as_path().to_path_buf(),
+                    ViewerState::Loading { generation: 1 },
+                ));
+                state.screen = Screen::GitDiff;
+                return vec![Effect::LoadGitDiff {
+                    directory: state.current_path.clone(),
+                    path,
+                }];
+            }
+        }
+        Action::GitDiffLoaded { path, result } => {
+            if state
+                .git_diff
+                .as_ref()
+                .is_some_and(|(current, _)| current == &path)
+            {
+                state.git_diff = Some((
+                    path,
+                    match result {
+                        Ok(diff) => ViewerState::decode(diff.into_bytes()),
+                        Err(error) => ViewerState::Error(error),
+                    },
+                ));
+            }
+        }
+        action @ (Action::GitDiffLine(delta) | Action::GitDiffPage(delta)) => {
+            if let Some((_, ViewerState::Ready(document))) = &mut state.git_diff {
+                let amount = if matches!(action, Action::GitDiffPage(_)) {
+                    10
+                } else {
+                    1
+                };
+                if delta < 0 {
+                    document.top_line = document.top_line.saturating_sub(amount);
+                } else {
+                    document.top_line =
+                        (document.top_line + amount).min(document.lines.len().saturating_sub(1));
+                }
+            }
+        }
+        Action::GitDiffHome => {
+            if let Some((_, ViewerState::Ready(document))) = &mut state.git_diff {
+                document.top_line = 0;
+            }
+        }
+        Action::GitDiffEnd => {
+            if let Some((_, ViewerState::Ready(document))) = &mut state.git_diff {
+                document.top_line = document.lines.len().saturating_sub(1);
+            }
+        }
         Action::ShowRename => {
             if let Some(entry) = state.selected_entry().filter(|entry| entry.is_markable()) {
                 state.input_dialog = Some(InputDialog::new(
@@ -1363,7 +1474,11 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
         Action::RequestQuit => state.screen = Screen::QuitConfirm,
         Action::CloseOverlay => {
-            if state.screen == Screen::Viewer {
+            if state.screen == Screen::GitDiff {
+                state.git_diff = None;
+                state.screen = Screen::GitStatus;
+                return Vec::new();
+            } else if state.screen == Screen::Viewer {
                 state.viewer = None;
             } else if state.screen == Screen::Editor {
                 if state
@@ -1501,6 +1616,7 @@ mod tests {
             plugin_commands: Vec::new(),
             plugin_decorations: BTreeMap::new(),
             git_status_view: None,
+            git_diff: None,
         }
     }
 
@@ -1525,6 +1641,36 @@ mod tests {
         reduce(
             &mut app,
             Action::GitStatusLoaded {
+                result: Ok(["changed.txt", "added.txt", "deleted.txt"]
+                    .into_iter()
+                    .map(|path| crate::plugins::git::model::GitStatusRow {
+                        path: crate::plugins::git::model::RepoRelativePath::new(path).unwrap(),
+                        status: crate::plugins::git::model::GitStatus::Modified,
+                        old_path: None,
+                    })
+                    .collect()),
+            },
+        );
+        assert_eq!(app.screen, Screen::GitStatus);
+        assert_eq!(app.git_status_view.as_ref().unwrap().rows.len(), 3);
+
+        reduce(&mut app, Action::GitStatusMove(1));
+        reduce(&mut app, Action::GitStatusToggleMark);
+        assert_eq!(app.git_status_view.as_ref().unwrap().selected, 1);
+        assert_eq!(app.git_status_view.as_ref().unwrap().marked.len(), 1);
+        assert!(matches!(
+            reduce(&mut app, Action::RefreshGitStatus).as_slice(),
+            [Effect::LoadGitStatus(_)]
+        ));
+    }
+
+    #[test]
+    fn git_diff_opens_for_the_selected_status_row_and_returns_to_status() {
+        let mut app = state();
+        reduce(&mut app, Action::ShowGitStatus);
+        reduce(
+            &mut app,
+            Action::GitStatusLoaded {
                 result: Ok(vec![crate::plugins::git::model::GitStatusRow {
                     path: crate::plugins::git::model::RepoRelativePath::new("changed.txt").unwrap(),
                     status: crate::plugins::git::model::GitStatus::Modified,
@@ -1532,8 +1678,22 @@ mod tests {
                 }]),
             },
         );
+        assert!(matches!(
+            reduce(&mut app, Action::ShowGitDiff).as_slice(),
+            [Effect::LoadGitDiff { path, .. }] if path.as_path() == Path::new("changed.txt")
+        ));
+        reduce(
+            &mut app,
+            Action::GitDiffLoaded {
+                path: PathBuf::from("changed.txt"),
+                result: Ok("diff --git a/changed.txt b/changed.txt\n-old\n+new\n".into()),
+            },
+        );
+        assert_eq!(app.screen, Screen::GitDiff);
+        reduce(&mut app, Action::GitDiffEnd);
+        reduce(&mut app, Action::CloseOverlay);
         assert_eq!(app.screen, Screen::GitStatus);
-        assert_eq!(app.git_status_view.as_ref().unwrap().rows.len(), 1);
+        assert!(app.git_diff.is_none());
     }
 
     #[test]
