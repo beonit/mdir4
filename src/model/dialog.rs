@@ -10,6 +10,7 @@ pub enum InputPurpose {
     Move,
     SaveAs,
     SearchViewer,
+    SearchGitDiff,
     SearchEditor,
     QcdLabel,
     McdSearch,

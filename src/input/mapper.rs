@@ -51,6 +51,14 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 ..
             } => Some(Action::RefreshGitStatus),
             KeyChord {
+                code: KeyCode::Function(5),
+                ..
+            } => Some(Action::GitStage),
+            KeyChord {
+                code: KeyCode::Function(6),
+                ..
+            } => Some(Action::GitUnstage),
+            KeyChord {
                 code: KeyCode::Enter | KeyCode::Function(3),
                 ..
             } => Some(Action::ShowGitDiff),
@@ -85,6 +93,20 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
             KeyChord {
                 code: KeyCode::End, ..
             } => Some(Action::GitDiffEnd),
+            KeyChord {
+                code: KeyCode::Character('f' | 'F'),
+                control: true,
+                ..
+            } => Some(Action::ShowGitDiffSearch),
+            KeyChord {
+                code: KeyCode::Function(3),
+                shift: true,
+                ..
+            } => Some(Action::GitDiffNextMatch { backwards: true }),
+            KeyChord {
+                code: KeyCode::Function(3),
+                ..
+            } => Some(Action::GitDiffNextMatch { backwards: false }),
             _ => None,
         };
     }

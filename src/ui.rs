@@ -87,8 +87,9 @@ fn render_git_status(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         .collect();
     frame.render_widget(
         Paragraph::new(rows).block(
-            dialog_block(" Git Status ")
-                .title_bottom("Enter/F3 Diff  Up/Down Move  Space Mark  R Refresh  Esc Close"),
+            dialog_block(" Git Status ").title_bottom(
+                "Enter/F3 Diff  F5 Stage  F6 Unstage  Space Mark  R Refresh  Esc Close",
+            ),
         ),
         viewport,
     );
@@ -104,7 +105,7 @@ fn render_git_diff(frame: &mut Frame<'_>, viewport: Rect, state: &AppState) {
         viewport,
         viewer,
         &format!(" Git Diff: {} ", path.display()),
-        "Esc Back  Up/Down Scroll  PgUp/PgDn Page",
+        "Esc Back  Up/Down Scroll  PgUp/PgDn Page  Ctrl+F Find  F3 Next",
     );
 }
 

@@ -192,6 +192,12 @@ pub enum Action {
     GitStatusHome,
     GitStatusEnd,
     GitStatusToggleMark,
+    GitStage,
+    GitUnstage,
+    GitMutationCompleted {
+        action: String,
+        result: Result<(), String>,
+    },
     ShowGitDiff,
     GitDiffLoaded {
         path: PathBuf,
@@ -201,6 +207,10 @@ pub enum Action {
     GitDiffPage(i32),
     GitDiffHome,
     GitDiffEnd,
+    ShowGitDiffSearch,
+    GitDiffNextMatch {
+        backwards: bool,
+    },
     SettingsMove(i32),
     SettingsChange(i32),
     ApplySettings,
@@ -253,6 +263,10 @@ pub enum Effect {
     LoadGitDiff {
         directory: PathBuf,
         path: crate::plugins::git::model::RepoRelativePath,
+    },
+    RunGitMutation {
+        directory: PathBuf,
+        plan: crate::plugins::git::local::MutationPlan,
     },
 }
 
@@ -519,6 +533,46 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 view.toggle_mark();
             }
         }
+        action @ (Action::GitStage | Action::GitUnstage) => {
+            let kind = if matches!(action, Action::GitStage) {
+                crate::plugins::git::local::MutationKind::Stage
+            } else {
+                crate::plugins::git::local::MutationKind::Unstage
+            };
+            let rows = state
+                .git_status_view
+                .as_ref()
+                .map(crate::plugins::git::status_view::GitStatusViewState::selected_or_marked_rows)
+                .unwrap_or_default();
+            let rows: Vec<_> = rows
+                .iter()
+                .map(|row| (row.path.clone(), row.status))
+                .collect();
+            match crate::plugins::git::local::preflight_stage(kind, &rows) {
+                Ok(plan) => {
+                    let action =
+                        if matches!(plan.kind, crate::plugins::git::local::MutationKind::Stage) {
+                            "Stage"
+                        } else {
+                            "Unstage"
+                        };
+                    state.message = Some(format!("{action} in progress..."));
+                    return vec![Effect::RunGitMutation {
+                        directory: state.current_path.clone(),
+                        plan,
+                    }];
+                }
+                Err(error) => state.message = Some(error),
+            }
+        }
+        Action::GitMutationCompleted { action, result } => {
+            state.message = Some(match result {
+                Ok(()) => format!("{action} completed."),
+                Err(error) => format!("{action} failed: {error}"),
+            });
+            state.screen = Screen::GitStatus;
+            return vec![Effect::LoadGitStatus(state.current_path.clone())];
+        }
         Action::ShowGitDiff => {
             let path = state
                 .git_status_view
@@ -575,6 +629,21 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::GitDiffEnd => {
             if let Some((_, ViewerState::Ready(document))) = &mut state.git_diff {
                 document.top_line = document.lines.len().saturating_sub(1);
+            }
+        }
+        Action::ShowGitDiffSearch => {
+            state.input_dialog = Some(InputDialog::new(
+                "Find Git Diff",
+                "Search text",
+                "",
+                InputPurpose::SearchGitDiff,
+                None,
+            ));
+            state.screen = Screen::InputDialog;
+        }
+        Action::GitDiffNextMatch { backwards } => {
+            if let Some((_, ViewerState::Ready(document))) = &mut state.git_diff {
+                document.next_match(backwards);
             }
         }
         Action::ShowRename => {
@@ -798,6 +867,13 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                         state.screen = Screen::Viewer;
                         None
                     }
+                    InputPurpose::SearchGitDiff => {
+                        if let Some((_, ViewerState::Ready(document))) = &mut state.git_diff {
+                            document.search(value);
+                        }
+                        state.screen = Screen::GitDiff;
+                        None
+                    }
                     InputPurpose::SearchEditor => {
                         if let Some((_, editor)) = &mut state.editor
                             && !editor.find_next(&value)
@@ -864,12 +940,18 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 .input_dialog
                 .as_ref()
                 .is_some_and(|dialog| dialog.purpose == InputPurpose::QcdLabel);
+            let git_diff_dialog = state
+                .input_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.purpose == InputPurpose::SearchGitDiff);
             state.input_dialog = None;
             state.confirm_dialog = None;
             state.screen = if mcd_dialog {
                 Screen::Mcd
             } else if qcd_dialog {
                 Screen::Qcd
+            } else if git_diff_dialog {
+                Screen::GitDiff
             } else if state.editor.is_some() {
                 Screen::Editor
             } else if state.viewer.is_some() {
@@ -1690,6 +1772,16 @@ mod tests {
             },
         );
         assert_eq!(app.screen, Screen::GitDiff);
+        reduce(&mut app, Action::ShowGitDiffSearch);
+        reduce(&mut app, Action::DialogCharacter('n'));
+        reduce(&mut app, Action::DialogCharacter('e'));
+        reduce(&mut app, Action::DialogCharacter('w'));
+        reduce(&mut app, Action::ConfirmDialog);
+        assert_eq!(app.screen, Screen::GitDiff);
+        assert!(matches!(
+            app.git_diff,
+            Some((_, ViewerState::Ready(ref document))) if document.search.as_deref() == Some("new")
+        ));
         reduce(&mut app, Action::GitDiffEnd);
         reduce(&mut app, Action::CloseOverlay);
         assert_eq!(app.screen, Screen::GitStatus);

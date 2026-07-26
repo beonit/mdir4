@@ -19,7 +19,11 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use thiserror::Error;
 
-use crate::plugins::git::{model::GitReadBackend, real_backend::GitCliReadBackend};
+use crate::plugins::git::{
+    local::{GitCliMutationBackend, GitMutationBackend},
+    model::GitReadBackend,
+    real_backend::GitCliReadBackend,
+};
 use crate::{
     adapters::{
         real_fs::RealFileSystem, system_disk::SystemDiskInfo, system_launcher::SystemFileLauncher,
@@ -437,6 +441,16 @@ impl EffectWorker {
                             path: display_path,
                             result,
                         }
+                    }
+                    Effect::RunGitMutation { directory, plan } => {
+                        let action = match plan.kind {
+                            crate::plugins::git::local::MutationKind::Stage => "Stage",
+                            crate::plugins::git::local::MutationKind::Unstage => "Unstage",
+                            crate::plugins::git::local::MutationKind::Commit { .. } => "Commit",
+                        }
+                        .to_string();
+                        let result = GitCliMutationBackend::new(directory).execute(&plan);
+                        Action::GitMutationCompleted { action, result }
                     }
                     Effect::SaveConfig { path, config } => {
                         let result = crate::config::save_atomic(&path, &config)

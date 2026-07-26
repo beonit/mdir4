@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::{path::PathBuf, process::Command, sync::Mutex};
 
 use crate::{
     plugins::git::model::{GitStatus, RepoRelativePath},
@@ -50,6 +50,65 @@ pub fn plan_commit(
 
 pub trait GitMutationBackend: Send + Sync {
     fn execute(&self, plan: &MutationPlan) -> Result<(), String>;
+}
+
+pub struct GitCliMutationBackend {
+    worktree: PathBuf,
+}
+
+impl GitCliMutationBackend {
+    pub fn new(worktree: impl Into<PathBuf>) -> Self {
+        Self {
+            worktree: worktree.into(),
+        }
+    }
+
+    fn run(&self, arguments: &[&str]) -> Result<(), String> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&self.worktree)
+            .args(arguments)
+            .output()
+            .map_err(|_| "Git is unavailable.".to_string())?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .next()
+                .filter(|message| !message.trim().is_empty())
+                .unwrap_or("Git mutation failed.")
+                .to_string())
+        }
+    }
+}
+
+impl GitMutationBackend for GitCliMutationBackend {
+    fn execute(&self, plan: &MutationPlan) -> Result<(), String> {
+        let targets: Result<Vec<_>, _> = plan
+            .targets
+            .iter()
+            .map(|path| {
+                path.as_path()
+                    .to_str()
+                    .ok_or_else(|| "Invalid repository path.".to_string())
+            })
+            .collect();
+        let targets = targets?;
+        match &plan.kind {
+            MutationKind::Stage => {
+                let mut arguments = vec!["add", "--"];
+                arguments.extend(targets);
+                self.run(&arguments)
+            }
+            MutationKind::Unstage => {
+                let mut arguments = vec!["reset", "HEAD", "--"];
+                arguments.extend(targets);
+                self.run(&arguments)
+            }
+            MutationKind::Commit { message } => self.run(&["commit", "-m", message]),
+        }
+    }
 }
 
 #[derive(Default)]

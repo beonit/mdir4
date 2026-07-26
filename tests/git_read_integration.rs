@@ -1,4 +1,5 @@
 use mdir4::plugins::git::{
+    local::{GitCliMutationBackend, GitMutationBackend, MutationKind, plan_targets},
     model::{DiffTarget, GitReadBackend},
     real_backend::GitCliReadBackend,
 };
@@ -46,4 +47,40 @@ fn cli_read_backend_discovers_status_and_reads_unstaged_and_combined_diffs_witho
             .unwrap()
             .contains("+two")
     );
+}
+
+#[test]
+fn cli_mutation_backend_stages_and_unstages_only_the_requested_path() {
+    let temp = tempdir().unwrap();
+    git(temp.path(), &["init", "-q"]);
+    git(temp.path(), &["config", "user.name", "Test"]);
+    git(
+        temp.path(),
+        &["config", "user.email", "test@example.invalid"],
+    );
+    fs::write(temp.path().join("new.txt"), "new\n").unwrap();
+    let backend = GitCliMutationBackend::new(temp.path());
+    let path = mdir4::plugins::git::model::RepoRelativePath::new("new.txt").unwrap();
+
+    backend
+        .execute(&plan_targets(MutationKind::Stage, vec![path.clone()]).unwrap())
+        .unwrap();
+    let cached = Command::new("git")
+        .arg("-C")
+        .arg(temp.path())
+        .args(["diff", "--cached", "--name-only"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&cached.stdout).contains("new.txt"));
+
+    backend
+        .execute(&plan_targets(MutationKind::Unstage, vec![path]).unwrap())
+        .unwrap();
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(temp.path())
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&status.stdout).starts_with("?? new.txt"));
 }

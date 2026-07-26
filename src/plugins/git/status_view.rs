@@ -34,6 +34,20 @@ impl GitStatusViewState {
         }
     }
 
+    pub fn selected_or_marked_rows(&self) -> Vec<GitStatusRow> {
+        if self.marked.is_empty() {
+            return self.rows.get(self.selected).cloned().into_iter().collect();
+        }
+        self.rows
+            .iter()
+            .filter(|row| {
+                self.marked
+                    .contains(&row.path.as_path().display().to_string())
+            })
+            .cloned()
+            .collect()
+    }
+
     pub fn move_selection(&mut self, delta: i32) {
         let Some(last) = self.rows.len().checked_sub(1) else {
             self.selected = 0;
@@ -112,5 +126,23 @@ mod tests {
         assert_eq!(state.selected, 0);
         state.select_home();
         assert_eq!(state.marked, BTreeSet::from(["b".into()]));
+    }
+
+    #[test]
+    fn marked_rows_replace_the_cursor_target_for_a_mutation() {
+        let mut state = GitStatusViewState {
+            rows: vec![row("a"), row("b")],
+            selected: 1,
+            marked: BTreeSet::new(),
+        };
+        assert_eq!(
+            state.selected_or_marked_rows()[0].path.as_path(),
+            std::path::Path::new("b")
+        );
+        state.marked.insert("a".into());
+        assert_eq!(
+            state.selected_or_marked_rows()[0].path.as_path(),
+            std::path::Path::new("a")
+        );
     }
 }
