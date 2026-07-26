@@ -10,12 +10,12 @@
 - 코드: 기본 디렉터리 탐색이 가능한 Rust/Ratatui 애플리케이션
 - 문서: 원본 요구사항, 요구사항 검토, UI 참고 이미지, 구현 계획 작성됨
 - 현재 자동 기준선: 전체 93 tests passed, Clippy 경고 0
-- 다음 구현 카드: `R1-01 릴리스 후보 빌드와 패키징`
+- 다음 구현 카드: `R1-02 고정 RC Linux/macOS 실제 환경 수동 시험`
 - 후속 문서: Git built-in `G0~G3`, SSH Remote `S0~S3` 작성됨; production 구현 미착수
 
 체크박스 `[ ]`에는 `미착수`, `진행`, `외부 대기`가 모두 포함될 수 있다. 실제 실행 순서는
 위의 “다음 구현 카드”가 권위다. `M0-03`은 외부 대기이므로 로컬 에이전트가 반복 실행하지
-않고 R1-01을 진행한다.
+않고 R1-02를 진행한다.
 
 ## 단계 요약
 
@@ -24,8 +24,8 @@
 | M0 | 로컬 기준선 완료 | Linux build 증거는 R1-01에서 추가 |
 | M1 | 완료 | M2 인계 완료 |
 | M2 | 완료 | M3 인계 완료 |
-| M3 | 완료 | R1-01 |
-| R1 | 진행 | R1-01 Linux artifact와 scope-update commit 고정 |
+| M3 | 완료 | R1 인계 완료 |
+| R1 | 진행 | R1-02 Linux/macOS 실제 환경 수동 시험 |
 | Git G0~G3 | 계획 완료, 구현 미착수 | R1 후 G0-01 |
 | SSH Remote S0~S3 | 계획 완료, 구현 미착수 | R1 후 S0-00 |
 
@@ -217,13 +217,16 @@
 
 ## R1
 
-- [ ] R1-01 릴리스 후보 빌드와 패키징
+- [x] R1-01 릴리스 후보 빌드와 패키징
   - 구현일: 2026-07-25
   - 변경: release profile, cross-platform packager, dependency license inventory,
     Linux/macOS artifact build job, RC record
   - 로컬 검증: locked release build, macOS arm64 ZIP 구성과 SHA-256, 공통 93-test gate 성공
-  - 남은 조건: Linux binary/ZIP hash 고정, scope-update commit, Linux artifact-only smoke
-  - 상태: macOS artifact 검증 완료, Linux artifact 대기
+  - Linux 검증: Ubuntu 26.04 arm64 Lima VM, rustc/cargo 1.97.1, fmt/Clippy/93 tests/release 성공
+  - artifact-only smoke: Linux/macOS ZIP을 새 임시 디렉터리에 풀어 directory load,
+    Ctrl+Q/Enter 정상 종료와 terminal restoration 성공
+  - 고정 hash: macOS ZIP `f35d2956...34840f`, Linux ZIP `bf9b6685...7664b2`
+  - 상태: 완료; source commit `ee73764`
 - [ ] R1-02 고정 RC Linux/macOS 실제 환경 수동 시험
 - [ ] R1-03 v1.0 최종 게이트
 

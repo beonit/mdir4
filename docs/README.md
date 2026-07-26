@@ -15,12 +15,13 @@ M0 개발 기반
      └─ M1-13 계약 정합성 보정  완료
          └─ M2 파일 관리        완료
              └─ M3 기능 확장    완료
-                 └─ R1-01 Linux/macOS RC 빌드/패키징  다음 작업
+                 └─ R1-01 Linux/macOS RC 빌드/패키징  완료
+                     └─ R1-02 실제 환경 수동 시험    다음 작업
                      ├─ G0→G1→G2→G3 Git built-in
                      └─ S0→S1→S2→S3 SSH Remote Drive
 ```
 
-- 현재 활성 다음 카드는 `R1-01 릴리스 후보 빌드와 패키징`이다.
+- 현재 활성 다음 카드는 `R1-02 고정 RC Linux/macOS 실제 환경 수동 시험`이다.
 - Git과 SSH Remote는 제품 범위와 승인 조건이 독립적이다. 먼저 구현한 트랙은 generic
   unsupported fixture와 source-boundary test로 상대 트랙 부재를 검증하고 완료할 수 있다.
   둘 다 존재하는 시점부터 실제 Local/Remote 양방향 integration 행이 필수가 된다.
