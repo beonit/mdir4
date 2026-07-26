@@ -64,4 +64,12 @@ impl GitCliBranchBackend {
         validate_branch_name(name)?;
         Self::run(directory, &["branch", name]).map(|_| ())
     }
+
+    pub fn checkout(&self, directory: &Path, name: &str) -> Result<(), String> {
+        let dirty = Self::run(directory, &["status", "--porcelain=v1"])?;
+        if !dirty.is_empty() {
+            return Err("Cannot switch branches while the worktree has changes.".into());
+        }
+        Self::run(directory, &["switch", name]).map(|_| ())
+    }
 }

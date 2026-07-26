@@ -460,6 +460,10 @@ impl EffectWorker {
                         let result = GitCliBranchBackend.create(&directory, &name);
                         Action::GitBranchCreated { result }
                     }
+                    Effect::CheckoutGitBranch { directory, name } => {
+                        let result = GitCliBranchBackend.checkout(&directory, &name);
+                        Action::GitCheckoutCompleted { result }
+                    }
                     Effect::RunGitMutation { directory, plan } => {
                         let action = match plan.kind {
                             crate::plugins::git::local::MutationKind::Stage => "Stage",

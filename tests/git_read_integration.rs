@@ -159,9 +159,23 @@ fn cli_branch_backend_lists_current_branch_and_creates_a_valid_branch() {
     git(temp.path(), &["add", "note.txt"]);
     git(temp.path(), &["commit", "-qm", "initial"]);
     let backend = GitCliBranchBackend;
+    let original = backend
+        .list(temp.path())
+        .unwrap()
+        .into_iter()
+        .find(|branch| branch.current)
+        .unwrap()
+        .name;
     backend.create(temp.path(), "feature/demo").unwrap();
+    backend.checkout(temp.path(), "feature/demo").unwrap();
     let branches = backend.list(temp.path()).unwrap();
     assert!(branches.iter().any(|branch| branch.name == "feature/demo"));
-    assert_eq!(branches.iter().filter(|branch| branch.current).count(), 1);
+    assert!(
+        branches
+            .iter()
+            .any(|branch| branch.name == "feature/demo" && branch.current)
+    );
+    fs::write(temp.path().join("note.txt"), "dirty\n").unwrap();
+    assert!(backend.checkout(temp.path(), &original).is_err());
     assert!(validate_branch_name("bad name").is_err());
 }

@@ -171,7 +171,8 @@ fn render_git_branches(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) 
         .collect();
     frame.render_widget(
         Paragraph::new(rows).block(
-            dialog_block(" Git Branches ").title_bottom("Up/Down Move  F7 Create  Esc Back"),
+            dialog_block(" Git Branches ")
+                .title_bottom("Up/Down Move  Enter Switch  F7 Create  Esc Back"),
         ),
         viewport,
     );

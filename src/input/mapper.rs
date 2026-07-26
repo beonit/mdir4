@@ -168,6 +168,10 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 code: KeyCode::Function(7),
                 ..
             } => Some(Action::ShowGitBranchCreate),
+            KeyChord {
+                code: KeyCode::Enter,
+                ..
+            } => Some(Action::GitCheckout),
             _ => None,
         };
     }

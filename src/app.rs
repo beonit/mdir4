@@ -216,6 +216,10 @@ pub enum Action {
     GitBranchCreated {
         result: Result<(), String>,
     },
+    GitCheckout,
+    GitCheckoutCompleted {
+        result: Result<(), String>,
+    },
     GitMutationCompleted {
         action: String,
         result: Result<(), String>,
@@ -293,6 +297,10 @@ pub enum Effect {
     },
     LoadGitBranches(PathBuf),
     CreateGitBranch {
+        directory: PathBuf,
+        name: String,
+    },
+    CheckoutGitBranch {
         directory: PathBuf,
         name: String,
     },
@@ -661,6 +669,25 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             });
             state.screen = Screen::GitBranch;
             return vec![Effect::LoadGitBranches(state.current_path.clone())];
+        }
+        Action::GitCheckout => {
+            if let Some(branch) = state.git_branches.get(state.git_branch_selected)
+                && !branch.current
+            {
+                state.message = Some(format!("Switching to {}...", branch.name));
+                return vec![Effect::CheckoutGitBranch {
+                    directory: state.current_path.clone(),
+                    name: branch.name.clone(),
+                }];
+            }
+        }
+        Action::GitCheckoutCompleted { result } => {
+            state.message = Some(match result {
+                Ok(()) => "Branch switched.".into(),
+                Err(error) => format!("Switch branch failed: {error}"),
+            });
+            state.screen = Screen::GitStatus;
+            return vec![Effect::LoadGitStatus(state.current_path.clone())];
         }
         Action::GitLogLoaded { result } => match result {
             Ok(entries) => {
