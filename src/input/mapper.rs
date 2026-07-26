@@ -254,6 +254,14 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 ..
             } => Some(Action::McdMove(1)),
             KeyChord {
+                code: KeyCode::PageUp,
+                ..
+            } => Some(Action::McdPage(-1)),
+            KeyChord {
+                code: KeyCode::PageDown,
+                ..
+            } => Some(Action::McdPage(1)),
+            KeyChord {
                 code: KeyCode::Left,
                 ..
             } => Some(Action::McdCollapse),

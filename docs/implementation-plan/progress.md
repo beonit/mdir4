@@ -237,9 +237,11 @@
 아래 항목은 현재 M1~R1 완료 조건에 포함하지 않으며, M4까지의 기능이 끝난 뒤 별도
 요구사항 검토와 acceptance card를 만든 다음 구현한다.
 
-- [ ] M4+ UI-01 MCD 스크롤/뷰포트 보정
+- [x] M4+ UI-01 MCD 스크롤/뷰포트 보정
   - 긴 트리에서 선택 항목과 스크롤 위치가 안정적으로 따라오는지 재현·검토한다.
   - visible window, 페이지 이동, 검색/재검색 후 cursor 유지, 비동기 child load 중 viewport 보존을 다룬다.
+  - 구현: 선택 기반 visible window, 위/아래 추가 표시, PageUp/PageDown, tree unit tests.
+  - 검증: 전체 50 lib tests 및 전체 회귀 게이트 통과.
 - [ ] M4+ EDIT-01 외부 `$EDITOR` 연결 화면
   - `$EDITOR`와 `$VISUAL` fallback, 인자 전달, child process 대기, alternate screen/raw mode 복구,
     취소·비정상 종료·저장 후 reload를 Linux/macOS 기준으로 정의한다.

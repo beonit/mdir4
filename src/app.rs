@@ -148,6 +148,7 @@ pub enum Action {
         result: Result<Vec<PathBuf>, FsError>,
     },
     McdMove(i32),
+    McdPage(i32),
     McdCollapse,
     McdExpand,
     McdOpen,
@@ -931,6 +932,11 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::McdMove(delta) => {
             if let Some(tree) = &mut state.mcd {
                 tree.move_selection(delta);
+            }
+        }
+        Action::McdPage(delta) => {
+            if let Some(tree) = &mut state.mcd {
+                tree.page_move(delta, state.viewport.height.saturating_sub(5) as usize);
             }
         }
         Action::McdCollapse => {

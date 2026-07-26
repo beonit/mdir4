@@ -116,6 +116,32 @@ impl DirectoryTree {
         };
     }
 
+    pub fn page_move(&mut self, delta_pages: i32, page_size: usize) {
+        let step = page_size.max(1) as i32;
+        let delta = delta_pages.saturating_mul(step);
+        let len = self.visible_rows().len();
+        if delta < 0 {
+            self.selected = self.selected.saturating_sub(delta.unsigned_abs() as usize);
+        } else {
+            self.selected = self
+                .selected
+                .saturating_add(delta as usize)
+                .min(len.saturating_sub(1));
+        }
+    }
+
+    pub fn visible_window(&self, height: usize) -> (usize, Vec<VisibleRow>) {
+        let rows = self.visible_rows();
+        let count = height.max(1).min(rows.len().max(1));
+        let max_start = rows.len().saturating_sub(count);
+        let start = self
+            .selected
+            .saturating_sub(count.saturating_sub(1))
+            .min(max_start);
+        let end = (start + count).min(rows.len());
+        (start, rows[start..end].to_vec())
+    }
+
     pub fn collapse_or_parent(&mut self) {
         let Some(id) = self.visible_rows().get(self.selected).map(|row| row.id) else {
             return;
@@ -227,6 +253,45 @@ mod tests {
             tree.nodes.get_mut(&parent).unwrap().expanded = true;
         }
         assert_eq!(tree.visible_rows().len(), 1001);
+    }
+
+    #[test]
+    fn selected_row_stays_inside_the_scrolled_window() {
+        let mut tree = DirectoryTree::default();
+        let root = tree.add_root(PathBuf::from("/root"));
+        let children: Vec<_> = (0..30)
+            .map(|index| PathBuf::from(format!("/root/item-{index:02}")))
+            .collect();
+        tree.set_children(root, children);
+        tree.expand();
+        tree.page_move(5, 5);
+
+        let (start, rows) = tree.visible_window(5);
+        assert_eq!(start, 21);
+        assert_eq!(rows.len(), 5);
+        assert_eq!(
+            rows.last().unwrap().id,
+            tree.visible_rows()[tree.selected].id
+        );
+    }
+
+    #[test]
+    fn page_move_clamps_and_uses_the_requested_page_size() {
+        let mut tree = DirectoryTree::default();
+        let root = tree.add_root(PathBuf::from("/root"));
+        tree.set_children(
+            root,
+            (0..30)
+                .map(|index| PathBuf::from(format!("/root/item-{index:02}")))
+                .collect(),
+        );
+        tree.expand();
+        tree.page_move(2, 5);
+        assert_eq!(tree.selected, 10);
+        tree.page_move(-1, 5);
+        assert_eq!(tree.selected, 5);
+        tree.page_move(-99, 5);
+        assert_eq!(tree.selected, 0);
     }
 
     #[test]

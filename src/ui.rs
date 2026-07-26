@@ -193,13 +193,12 @@ fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         Block::default().style(palette::role(ThemeRole::McdBackground)),
         viewport,
     );
-    let rows = tree.visible_rows();
+    let (start, rows) = tree.visible_window(viewport.height.saturating_sub(5) as usize);
     let mut lines = vec![Line::raw("Mdir4 Change Directory")];
-    for (index, row) in rows
-        .iter()
-        .take(viewport.height.saturating_sub(3) as usize)
-        .enumerate()
-    {
+    if start > 0 {
+        lines.push(Line::raw("              ▲ more above"));
+    }
+    for (index, row) in rows.iter().enumerate() {
         let node = tree.node(row.id).unwrap();
         let prefix = row
             .connector_continues
@@ -219,13 +218,20 @@ fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
             .to_string_lossy();
         let line = format!(
             "{}{}{}{}{}",
-            if index == tree.selected { "> " } else { "  " },
+            if start + index == tree.selected {
+                "> "
+            } else {
+                "  "
+            },
             prefix,
             branch,
             name,
             marker
         );
         lines.push(Line::raw(line));
+    }
+    if start + rows.len() < tree.visible_rows().len() {
+        lines.push(Line::raw("              ▼ more below"));
     }
     lines.push(Line::raw("F2 Rescan  F3 Drives  Enter Open  Esc Cancel"));
     frame.render_widget(
