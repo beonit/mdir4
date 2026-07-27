@@ -18,4 +18,6 @@ host-verification, or endpoint details in UI errors.
   production listing adapter is attached to navigation.
 - Each request carries a location, session epoch, view generation, and operation identity;
   completion is ignored unless all three UI/session identities still match.
+- Remote work uses a bounded serial lane per location. Submission is non-blocking and active
+  cancellation is outside its request queue.
 - The existing SFTP home probe is discovery only; it does not represent a persistent session.
