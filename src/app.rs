@@ -153,6 +153,10 @@ pub enum Action {
     OpenDrivePicker,
     DrivesLoaded(Result<Vec<PathBuf>, String>),
     SshHostsLoaded(crate::remote::openssh_hosts::SshHostDiscovery),
+    RemoteHostProbed {
+        alias: crate::remote::openssh_hosts::SshHostAlias,
+        result: Result<crate::remote::location::RemotePath, String>,
+    },
     DriveMove(i32),
     OpenSelectedDrive,
     CancelOperation,
@@ -298,6 +302,7 @@ pub enum Effect {
     },
     LoadDrives,
     LoadSshHosts,
+    ProbeSshHost(crate::remote::openssh_hosts::SshHostAlias),
     CancelOperation,
     ResolveConflict(crate::model::operation::ConflictDecision),
     LoadMcdChildren {
@@ -1994,11 +1999,19 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 .remote_hosts
                 .get(state.selected_drive.saturating_sub(state.drives.len()))
             {
-                state.message = Some(format!(
-                    "SSH host '{}' selected. Remote connection support is not available yet.",
-                    alias.as_str()
-                ));
+                state.message = Some(format!("Probing SSH host '{}'...", alias.as_str()));
+                return vec![Effect::ProbeSshHost(alias.clone())];
             }
+        }
+        Action::RemoteHostProbed { alias, result } => {
+            state.message = Some(match result {
+                Ok(home) => format!(
+                    "SFTP probe succeeded for '{}'. Remote home: {}",
+                    alias.as_str(),
+                    home.display()
+                ),
+                Err(error) => format!("Could not connect to '{}': {error}", alias.as_str()),
+            });
         }
         Action::RequestQuit => state.screen = Screen::QuitConfirm,
         Action::CloseOverlay => {
@@ -2467,6 +2480,24 @@ mod tests {
         reduce(&mut app, Action::CloseOverlay);
         assert_eq!(app.screen, Screen::Main);
         assert!(app.settings_preview.is_none());
+    }
+
+    #[test]
+    fn selecting_an_ssh_host_requests_a_probe_without_leaving_the_picker() {
+        let mut app = state();
+        let alias = crate::remote::openssh_hosts::SshHostAlias::new("development").unwrap();
+        app.screen = Screen::DrivePicker;
+        app.remote_hosts = vec![alias.clone()];
+
+        assert_eq!(
+            reduce(&mut app, Action::OpenSelectedDrive),
+            vec![Effect::ProbeSshHost(alias)]
+        );
+        assert_eq!(app.screen, Screen::DrivePicker);
+        assert_eq!(
+            app.message.as_deref(),
+            Some("Probing SSH host 'development'...")
+        );
     }
 
     #[test]

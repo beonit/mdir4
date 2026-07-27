@@ -59,7 +59,13 @@ impl OpenSshSftpConnector {
 impl SftpConnector for OpenSshSftpConnector {
     fn probe_home(&self, alias: &SshHostAlias) -> Result<RemotePath, SftpConnectError> {
         let mut child = Command::new(&self.executable)
-            .args(["-oBatchMode=yes", "-b", "-", alias.as_str()])
+            .args([
+                "-oBatchMode=yes",
+                "-oConnectTimeout=15",
+                "-b",
+                "-",
+                alias.as_str(),
+            ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

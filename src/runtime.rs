@@ -27,6 +27,7 @@ use crate::plugins::git::{
     real_backend::GitCliReadBackend,
     stash::{GitCliStashBackend, GitStashBackend},
 };
+use crate::remote::sftp::SftpConnector;
 use crate::{
     adapters::{
         real_fs::RealFileSystem, system_disk::SystemDiskInfo, system_launcher::SystemFileLauncher,
@@ -416,6 +417,12 @@ impl EffectWorker {
                             _ => crate::remote::openssh_hosts::SshHostDiscovery::default(),
                         };
                         Action::SshHostsLoaded(discovery)
+                    }
+                    Effect::ProbeSshHost(alias) => {
+                        let result = crate::remote::sftp::OpenSshSftpConnector::default()
+                            .probe_home(&alias)
+                            .map_err(|error| error.message().to_string());
+                        Action::RemoteHostProbed { alias, result }
                     }
                     Effect::LoadMcdChildren { node, path } => {
                         let result = filesystem.read_dir(&path).map(|entries| {
