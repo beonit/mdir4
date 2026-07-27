@@ -16,4 +16,6 @@ host-verification, or endpoint details in UI errors.
 - Symlinks are represented distinctly and are never followed implicitly.
 - Connection/list/read cancellation and per-location worker ownership are required before the
   production listing adapter is attached to navigation.
+- Each request carries a location, session epoch, view generation, and operation identity;
+  completion is ignored unless all three UI/session identities still match.
 - The existing SFTP home probe is discovery only; it does not represent a persistent session.
