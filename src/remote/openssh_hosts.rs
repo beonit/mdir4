@@ -11,6 +11,7 @@ impl SshHostAlias {
     pub fn new(alias: impl Into<String>) -> Result<Self, String> {
         let alias = alias.into();
         if alias.is_empty()
+            || alias.starts_with('-')
             || alias.starts_with('!')
             || alias.contains(['*', '?'])
             || alias.chars().any(char::is_control)
@@ -312,6 +313,7 @@ mod tests {
     fn alias_validation_rejects_wildcards_and_negation() {
         assert!(SshHostAlias::new("dev").is_ok());
         assert!(SshHostAlias::new("*").is_err());
+        assert!(SshHostAlias::new("-oProxyCommand=bad").is_err());
         assert!(SshHostAlias::new("!production").is_err());
     }
 }
