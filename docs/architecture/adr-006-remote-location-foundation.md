@@ -10,6 +10,10 @@ The production OpenSSH adapter must implement the same read port. It must not bu
 shell command, downgrade unknown bytes to a local `PathBuf`, or expose authentication,
 host-verification, or endpoint details in UI errors.
 
+The initial production reader starts the OpenSSH SFTP subsystem (`ssh -s <alias> sftp`) with
+an argument array and speaks SFTP v3 packets directly. This preserves server filenames as bytes
+and lets OpenSSH continue to own `~/.ssh/config`, agents, `ProxyJump`, and host-key checks.
+
 ## Consequences
 
 - A remote listing is directories-first and byte-name stable, with duplicate names rejected.
