@@ -169,7 +169,7 @@ fn render_remote(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetric
     );
     frame.render_widget(
         Paragraph::new(pad_or_truncate(
-            "1Help 2--- 3View 4Disabled 5Disabled 6Disabled 7--- 8--- 9--- 10--- 11--- 12Locations",
+            "1Help 2--- 3--- 4Disabled 5Disabled 6Disabled 7--- 8--- 9--- 10--- 11--- 12Locations",
             metrics.function_bar.width as usize,
         ))
         .style(palette::role(ThemeRole::FunctionBar)),
