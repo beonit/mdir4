@@ -80,6 +80,7 @@ fn ten_thousand_entry_navigation_and_render_smoke() {
         show_hidden: true,
         drives: Vec::new(),
         remote_hosts: Vec::new(),
+        remote_view: None,
         selected_drive: 0,
         conflict: None,
         long_view: false,

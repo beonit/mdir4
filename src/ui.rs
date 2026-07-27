@@ -35,6 +35,10 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         render_git_log_detail(frame, metrics.viewport, state);
         return;
     }
+    if state.screen == Screen::Remote {
+        render_remote(frame, state, metrics);
+        return;
+    }
 
     render_main(frame, state, metrics);
     match state.screen {
@@ -62,8 +66,115 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         Screen::GitLog => render_git_log(frame, state, metrics.viewport),
         Screen::GitBranch => render_git_branches(frame, state, metrics.viewport),
         Screen::GitStash => render_git_stashes(frame, state, metrics.viewport),
-        Screen::Main => {}
+        Screen::Main | Screen::Remote => {}
     }
+}
+
+fn render_remote(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
+    let Some(view) = &state.remote_view else {
+        return;
+    };
+    let path = format!(
+        "{}:{} [Remote read-only]",
+        view.alias.as_str(),
+        view.path.display()
+    );
+    frame.render_widget(
+        Paragraph::new(pad_or_truncate(&path, metrics.path_bar.width as usize))
+            .style(palette::role(ThemeRole::PathBar)),
+        metrics.path_bar,
+    );
+
+    let page_start = view
+        .selected
+        .checked_div(metrics.page_capacity)
+        .unwrap_or_default()
+        * metrics.page_capacity;
+    for (column_index, column) in metrics.columns.iter().enumerate() {
+        let has_separator = column_index + 1 < metrics.columns.len();
+        let content_width = column.width.saturating_sub(u16::from(has_separator));
+        let mut lines = Vec::with_capacity(metrics.rows_per_column);
+        for row in 0..metrics.rows_per_column {
+            let index = page_start + column_index * metrics.rows_per_column + row;
+            let Some(entry) = view.entries.get(index) else {
+                lines.push(Line::raw(""));
+                continue;
+            };
+            let kind = match entry.kind {
+                crate::remote::backend::RemoteEntryKind::Directory => "<DIR>",
+                crate::remote::backend::RemoteEntryKind::File => "     ",
+                crate::remote::backend::RemoteEntryKind::Symlink => "<LNK>",
+                crate::remote::backend::RemoteEntryKind::Other => "<OTH>",
+            };
+            let text = format!(
+                "{} {} {}",
+                pad_or_truncate(
+                    &entry.name.display().to_string(),
+                    (content_width as usize).saturating_sub(14),
+                ),
+                kind,
+                entry.size.map(human_size).unwrap_or_else(|| "--".into())
+            );
+            let role = if index == view.selected {
+                ThemeRole::EntryCursor
+            } else if entry.kind == crate::remote::backend::RemoteEntryKind::Directory {
+                ThemeRole::EntryDirectory
+            } else {
+                ThemeRole::EntryFile
+            };
+            lines.push(Line::from(Span::styled(text, palette::role(role))));
+        }
+        frame.render_widget(
+            Paragraph::new(Text::from(lines)).style(palette::role(ThemeRole::MainBackground)),
+            *column,
+        );
+        if has_separator {
+            frame.render_widget(
+                Block::default()
+                    .borders(Borders::RIGHT)
+                    .border_style(palette::role(ThemeRole::ColumnSeparator)),
+                *column,
+            );
+        }
+    }
+    let detail = view
+        .entries
+        .get(view.selected)
+        .map(|entry| format!("{}   Remote read-only", entry.name.display()))
+        .unwrap_or_else(|| "(no items)".to_string());
+    render_status_line(
+        frame,
+        detail,
+        metrics.item_detail,
+        palette::role(ThemeRole::StatusBar),
+    );
+    render_status_line(
+        frame,
+        format!(
+            "Remote {}  Items {}",
+            view.alias.as_str(),
+            view.entries.len()
+        ),
+        metrics.directory_summary,
+        palette::role(ThemeRole::StatusBar),
+    );
+    render_status_line(
+        frame,
+        state
+            .message
+            .as_deref()
+            .unwrap_or("Enter Open  Backspace Parent  R Refresh  Esc Locations"),
+        metrics.message_bar,
+        palette::role(ThemeRole::MessageBar),
+    );
+    frame.render_widget(
+        Paragraph::new(pad_or_truncate(
+            "1Help 2--- 3View 4Disabled 5Disabled 6Disabled 7--- 8--- 9--- 10--- 11--- 12Locations",
+            metrics.function_bar.width as usize,
+        ))
+        .style(palette::role(ThemeRole::FunctionBar)),
+        metrics.function_bar,
+    );
 }
 
 fn render_git_status(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
@@ -1162,6 +1273,7 @@ mod tests {
             show_hidden: true,
             drives: Vec::new(),
             remote_hosts: Vec::new(),
+            remote_view: None,
             selected_drive: 0,
             conflict: None,
             long_view: false,
@@ -1357,6 +1469,7 @@ mod tests {
             show_hidden: true,
             drives: Vec::new(),
             remote_hosts: Vec::new(),
+            remote_view: None,
             selected_drive: 0,
             conflict: None,
             long_view: false,

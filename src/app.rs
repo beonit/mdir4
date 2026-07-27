@@ -44,6 +44,7 @@ pub enum Screen {
     Editor,
     Progress,
     DrivePicker,
+    Remote,
     ConflictDialog,
     Mcd,
     Qcd,
@@ -157,6 +158,21 @@ pub enum Action {
         alias: crate::remote::openssh_hosts::SshHostAlias,
         result: Result<crate::remote::location::RemotePath, String>,
     },
+    RemoteDirectoryLoaded {
+        alias: crate::remote::openssh_hosts::SshHostAlias,
+        path: crate::remote::location::RemotePath,
+        result: Result<
+            crate::remote::backend::RemoteDirectoryListing,
+            crate::remote::backend::RemoteReadError,
+        >,
+    },
+    RemoteMove(Direction),
+    RemotePage(PageDirection),
+    RemoteHome,
+    RemoteEnd,
+    RemoteOpen,
+    RemoteGoParent,
+    RemoteReload,
     DriveMove(i32),
     OpenSelectedDrive,
     CancelOperation,
@@ -303,6 +319,10 @@ pub enum Effect {
     LoadDrives,
     LoadSshHosts,
     ProbeSshHost(crate::remote::openssh_hosts::SshHostAlias),
+    LoadRemoteDirectory {
+        alias: crate::remote::openssh_hosts::SshHostAlias,
+        path: crate::remote::location::RemotePath,
+    },
     CancelOperation,
     ResolveConflict(crate::model::operation::ConflictDecision),
     LoadMcdChildren {
@@ -372,6 +392,7 @@ pub struct AppState {
     pub show_hidden: bool,
     pub drives: Vec<PathBuf>,
     pub remote_hosts: Vec<crate::remote::openssh_hosts::SshHostAlias>,
+    pub remote_view: Option<RemoteView>,
     pub selected_drive: usize,
     pub conflict: Option<(PathBuf, PathBuf)>,
     pub long_view: bool,
@@ -400,6 +421,15 @@ pub struct AppState {
     pub git_stash_selected: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteView {
+    pub alias: crate::remote::openssh_hosts::SshHostAlias,
+    pub root: crate::remote::location::RemotePath,
+    pub path: crate::remote::location::RemotePath,
+    pub entries: Vec<crate::remote::backend::RemoteEntry>,
+    pub selected: usize,
+}
+
 impl AppState {
     pub fn new(start_path: PathBuf, viewport: Viewport) -> Self {
         Self {
@@ -422,6 +452,7 @@ impl AppState {
             show_hidden: true,
             drives: Vec::new(),
             remote_hosts: Vec::new(),
+            remote_view: None,
             selected_drive: 0,
             conflict: None,
             long_view: false,
@@ -2003,15 +2034,134 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 return vec![Effect::ProbeSshHost(alias.clone())];
             }
         }
-        Action::RemoteHostProbed { alias, result } => {
-            state.message = Some(match result {
-                Ok(home) => format!(
-                    "SFTP probe succeeded for '{}'. Remote home: {}",
-                    alias.as_str(),
-                    home.display()
-                ),
-                Err(error) => format!("Could not connect to '{}': {error}", alias.as_str()),
-            });
+        Action::RemoteHostProbed { alias, result } => match result {
+            Ok(home) => {
+                state.remote_view = Some(RemoteView {
+                    alias: alias.clone(),
+                    root: home.clone(),
+                    path: home.clone(),
+                    entries: Vec::new(),
+                    selected: 0,
+                });
+                state.screen = Screen::Remote;
+                state.message = Some(format!(
+                    "Loading remote directory for '{}'...",
+                    alias.as_str()
+                ));
+                return vec![Effect::LoadRemoteDirectory { alias, path: home }];
+            }
+            Err(error) => {
+                state.message = Some(format!(
+                    "Could not connect to '{}': {error}",
+                    alias.as_str()
+                ));
+            }
+        },
+        Action::RemoteDirectoryLoaded {
+            alias,
+            path,
+            result,
+        } => {
+            let Some(view) = state.remote_view.as_mut() else {
+                return Vec::new();
+            };
+            if view.alias != alias || view.path != path {
+                return Vec::new();
+            }
+            match result {
+                Ok(listing) => {
+                    view.entries = listing.entries;
+                    view.selected = view.selected.min(view.entries.len().saturating_sub(1));
+                    state.message = if view.entries.is_empty() {
+                        Some("Empty remote directory".to_string())
+                    } else {
+                        None
+                    };
+                }
+                Err(error) => state.message = Some(error.message().to_string()),
+            }
+        }
+        Action::RemoteMove(direction) => {
+            if let Some(view) = state.remote_view.as_mut() {
+                let metrics = layout::calculate_for_entries(
+                    state.viewport,
+                    state.layout_settings,
+                    view.entries.len(),
+                );
+                view.selected =
+                    layout::move_cursor(view.selected, view.entries.len(), direction, &metrics);
+            }
+        }
+        Action::RemotePage(direction) => {
+            if let Some(view) = state.remote_view.as_mut() {
+                let metrics = layout::calculate_for_entries(
+                    state.viewport,
+                    state.layout_settings,
+                    view.entries.len(),
+                );
+                view.selected =
+                    layout::move_page(view.selected, view.entries.len(), direction, &metrics);
+            }
+        }
+        Action::RemoteHome => {
+            if let Some(view) = state.remote_view.as_mut() {
+                view.selected = 0;
+            }
+        }
+        Action::RemoteEnd => {
+            if let Some(view) = state.remote_view.as_mut() {
+                view.selected = view.entries.len().saturating_sub(1);
+            }
+        }
+        Action::RemoteOpen => {
+            let Some(view) = state.remote_view.as_mut() else {
+                return Vec::new();
+            };
+            let Some(entry) = view.entries.get(view.selected) else {
+                return Vec::new();
+            };
+            if entry.kind != crate::remote::backend::RemoteEntryKind::Directory {
+                state.message = Some("Remote file viewing is not available yet.".to_string());
+                return Vec::new();
+            }
+            let Ok(path) = view.path.join(entry.name.as_bytes()) else {
+                state.message = Some("Remote entry path is invalid.".to_string());
+                return Vec::new();
+            };
+            view.path = path.clone();
+            view.entries.clear();
+            view.selected = 0;
+            state.message = Some("Loading remote directory...".to_string());
+            return vec![Effect::LoadRemoteDirectory {
+                alias: view.alias.clone(),
+                path,
+            }];
+        }
+        Action::RemoteGoParent => {
+            let Some(view) = state.remote_view.as_mut() else {
+                return Vec::new();
+            };
+            if view.path == view.root {
+                state.message = Some("At remote root.".to_string());
+                return Vec::new();
+            }
+            view.path = view.path.parent();
+            view.entries.clear();
+            view.selected = 0;
+            state.message = Some("Loading remote parent...".to_string());
+            return vec![Effect::LoadRemoteDirectory {
+                alias: view.alias.clone(),
+                path: view.path.clone(),
+            }];
+        }
+        Action::RemoteReload => {
+            if let Some(view) = &state.remote_view {
+                state.message = Some("Refreshing remote directory...".to_string());
+                return vec![Effect::LoadRemoteDirectory {
+                    alias: view.alias.clone(),
+                    path: view.path.clone(),
+                }];
+            }
         }
         Action::RequestQuit => state.screen = Screen::QuitConfirm,
         Action::CloseOverlay => {
@@ -2156,6 +2306,7 @@ mod tests {
             show_hidden: true,
             drives: Vec::new(),
             remote_hosts: Vec::new(),
+            remote_view: None,
             selected_drive: 0,
             conflict: None,
             long_view: false,
@@ -2498,6 +2649,74 @@ mod tests {
             app.message.as_deref(),
             Some("Probing SSH host 'development'...")
         );
+    }
+
+    #[test]
+    fn remote_probe_opens_a_read_only_view_and_keeps_parent_inside_its_root() {
+        let mut app = state();
+        let alias = crate::remote::openssh_hosts::SshHostAlias::new("development").unwrap();
+        let root = crate::remote::location::RemotePath::from_absolute(b"/srv/app").unwrap();
+        assert_eq!(
+            reduce(
+                &mut app,
+                Action::RemoteHostProbed {
+                    alias: alias.clone(),
+                    result: Ok(root.clone()),
+                },
+            ),
+            vec![Effect::LoadRemoteDirectory {
+                alias: alias.clone(),
+                path: root.clone(),
+            }]
+        );
+        assert_eq!(app.screen, Screen::Remote);
+
+        let child = crate::remote::backend::RemoteEntry {
+            name: crate::remote::backend::RemoteName::from_bytes(b"child").unwrap(),
+            kind: crate::remote::backend::RemoteEntryKind::Directory,
+            size: None,
+        };
+        reduce(
+            &mut app,
+            Action::RemoteDirectoryLoaded {
+                alias: alias.clone(),
+                path: root.clone(),
+                result: Ok(crate::remote::backend::RemoteDirectoryListing::new(
+                    root.clone(),
+                    vec![child],
+                )
+                .unwrap()),
+            },
+        );
+        let child_path = root.join(b"child").unwrap();
+        assert_eq!(
+            reduce(&mut app, Action::RemoteOpen),
+            vec![Effect::LoadRemoteDirectory {
+                alias: alias.clone(),
+                path: child_path.clone(),
+            }]
+        );
+        assert_eq!(
+            reduce(&mut app, Action::RemoteGoParent),
+            vec![Effect::LoadRemoteDirectory {
+                alias: alias.clone(),
+                path: root.clone(),
+            }]
+        );
+        reduce(
+            &mut app,
+            Action::RemoteDirectoryLoaded {
+                alias,
+                path: root,
+                result: Ok(crate::remote::backend::RemoteDirectoryListing::new(
+                    crate::remote::location::RemotePath::from_absolute(b"/srv/app").unwrap(),
+                    Vec::new(),
+                )
+                .unwrap()),
+            },
+        );
+        assert!(reduce(&mut app, Action::RemoteGoParent).is_empty());
+        assert_eq!(app.message.as_deref(), Some("At remote root."));
     }
 
     #[test]

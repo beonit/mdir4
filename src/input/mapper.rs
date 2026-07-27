@@ -1,6 +1,7 @@
 use crossterm::event::KeyEvent;
 
 use crate::app::{Action, Screen, command_registry::CommandRegistry};
+use crate::layout::{Direction, PageDirection};
 
 use super::key::{KeyChord, KeyCode, normalize};
 
@@ -643,6 +644,57 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 code: KeyCode::Enter,
                 ..
             } => Some(Action::OpenSelectedDrive),
+            _ => None,
+        };
+    }
+    if screen == Screen::Remote {
+        return match chord {
+            KeyChord {
+                code: KeyCode::Escape,
+                ..
+            } => Some(Action::OpenDrivePicker),
+            KeyChord {
+                code: KeyCode::Up, ..
+            } => Some(Action::RemoteMove(Direction::Up)),
+            KeyChord {
+                code: KeyCode::Down,
+                ..
+            } => Some(Action::RemoteMove(Direction::Down)),
+            KeyChord {
+                code: KeyCode::Left,
+                ..
+            } => Some(Action::RemoteMove(Direction::Left)),
+            KeyChord {
+                code: KeyCode::Right,
+                ..
+            } => Some(Action::RemoteMove(Direction::Right)),
+            KeyChord {
+                code: KeyCode::PageUp,
+                ..
+            } => Some(Action::RemotePage(PageDirection::Up)),
+            KeyChord {
+                code: KeyCode::PageDown,
+                ..
+            } => Some(Action::RemotePage(PageDirection::Down)),
+            KeyChord {
+                code: KeyCode::Home,
+                ..
+            } => Some(Action::RemoteHome),
+            KeyChord {
+                code: KeyCode::End, ..
+            } => Some(Action::RemoteEnd),
+            KeyChord {
+                code: KeyCode::Enter,
+                ..
+            } => Some(Action::RemoteOpen),
+            KeyChord {
+                code: KeyCode::Backspace,
+                ..
+            } => Some(Action::RemoteGoParent),
+            KeyChord {
+                code: KeyCode::Character('r' | 'R'),
+                ..
+            } => Some(Action::RemoteReload),
             _ => None,
         };
     }
