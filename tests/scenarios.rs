@@ -79,6 +79,7 @@ fn ten_thousand_entry_navigation_and_render_smoke() {
         sort_direction: mdir4::model::directory::SortDirection::Ascending,
         show_hidden: true,
         drives: Vec::new(),
+        remote_hosts: Vec::new(),
         selected_drive: 0,
         conflict: None,
         long_view: false,

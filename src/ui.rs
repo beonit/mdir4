@@ -480,30 +480,42 @@ fn render_conflict_dialog(frame: &mut Frame<'_>, state: &AppState, viewport: Rec
 }
 
 fn render_drive_picker(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
-    let body = if state.drives.is_empty() {
-        "Loading drives...".to_string()
-    } else {
-        state
-            .drives
-            .iter()
-            .enumerate()
-            .map(|(index, path)| {
-                format!(
-                    "{} {}",
-                    if index == state.selected_drive {
-                        ">"
-                    } else {
-                        " "
-                    },
-                    path.display()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let area = centered_rect(viewport.width.saturating_sub(8).min(50), 8, viewport);
+    let mut lines = vec!["Local".to_string()];
+    lines.extend(state.drives.iter().enumerate().map(|(index, path)| {
+        format!(
+            "{} {}",
+            if index == state.selected_drive {
+                ">"
+            } else {
+                " "
+            },
+            path.display()
+        )
+    }));
+    lines.push("SSH Hosts".to_string());
+    lines.extend(state.remote_hosts.iter().enumerate().map(|(index, alias)| {
+        format!(
+            "{} {}",
+            if state.drives.len() + index == state.selected_drive {
+                ">"
+            } else {
+                " "
+            },
+            alias.as_str()
+        )
+    }));
+    if state.drives.is_empty() && state.remote_hosts.is_empty() {
+        lines.push("Loading locations...".to_string());
+    }
+    let height = (lines.len() as u16 + 2).clamp(8, viewport.height.saturating_sub(2));
+    let area = centered_rect(viewport.width.saturating_sub(8).min(50), height, viewport);
     frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(body).block(dialog_block(" Drives ")), area);
+    frame.render_widget(
+        Paragraph::new(lines.join("\n")).block(
+            dialog_block(" Locations ").title_bottom("Up/Down Select  Enter Open  Esc Back"),
+        ),
+        area,
+    );
 }
 
 fn render_input_dialog(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
@@ -1149,6 +1161,7 @@ mod tests {
             sort_direction: crate::model::directory::SortDirection::Ascending,
             show_hidden: true,
             drives: Vec::new(),
+            remote_hosts: Vec::new(),
             selected_drive: 0,
             conflict: None,
             long_view: false,
@@ -1343,6 +1356,7 @@ mod tests {
             sort_direction: crate::model::directory::SortDirection::Ascending,
             show_hidden: true,
             drives: Vec::new(),
+            remote_hosts: Vec::new(),
             selected_drive: 0,
             conflict: None,
             long_view: false,

@@ -152,6 +152,7 @@ pub enum Action {
     ToggleHidden,
     OpenDrivePicker,
     DrivesLoaded(Result<Vec<PathBuf>, String>),
+    SshHostsLoaded(crate::remote::openssh_hosts::SshHostDiscovery),
     DriveMove(i32),
     OpenSelectedDrive,
     CancelOperation,
@@ -296,6 +297,7 @@ pub enum Effect {
         current_directory: PathBuf,
     },
     LoadDrives,
+    LoadSshHosts,
     CancelOperation,
     ResolveConflict(crate::model::operation::ConflictDecision),
     LoadMcdChildren {
@@ -364,6 +366,7 @@ pub struct AppState {
     pub sort_direction: SortDirection,
     pub show_hidden: bool,
     pub drives: Vec<PathBuf>,
+    pub remote_hosts: Vec<crate::remote::openssh_hosts::SshHostAlias>,
     pub selected_drive: usize,
     pub conflict: Option<(PathBuf, PathBuf)>,
     pub long_view: bool,
@@ -413,6 +416,7 @@ impl AppState {
             sort_direction: SortDirection::Ascending,
             show_hidden: true,
             drives: Vec::new(),
+            remote_hosts: Vec::new(),
             selected_drive: 0,
             conflict: None,
             long_view: false,
@@ -1953,8 +1957,9 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::OpenDrivePicker => {
             state.screen = Screen::DrivePicker;
             state.drives.clear();
+            state.remote_hosts.clear();
             state.selected_drive = 0;
-            return vec![Effect::LoadDrives];
+            return vec![Effect::LoadDrives, Effect::LoadSshHosts];
         }
         Action::DrivesLoaded(result) => match result {
             Ok(drives) => {
@@ -1966,17 +1971,33 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             }
             Err(error) => state.message = Some(format!("Could not list drives: {error}")),
         },
+        Action::SshHostsLoaded(discovery) => {
+            state.remote_hosts = discovery.aliases;
+            if let Some(diagnostic) = discovery.diagnostics.first() {
+                state.message = Some(diagnostic.clone());
+            }
+        }
         Action::DriveMove(delta) => {
+            let count = state.drives.len() + state.remote_hosts.len();
             state.selected_drive = if delta < 0 {
                 state.selected_drive.saturating_sub(1)
             } else {
-                (state.selected_drive + 1).min(state.drives.len().saturating_sub(1))
+                (state.selected_drive + 1).min(count.saturating_sub(1))
             };
         }
         Action::OpenSelectedDrive => {
             if let Some(path) = state.drives.get(state.selected_drive).cloned() {
                 state.screen = Screen::Main;
                 return vec![Effect::LoadDirectory(path)];
+            }
+            if let Some(alias) = state
+                .remote_hosts
+                .get(state.selected_drive.saturating_sub(state.drives.len()))
+            {
+                state.message = Some(format!(
+                    "SSH host '{}' selected. Remote connection support is not available yet.",
+                    alias.as_str()
+                ));
             }
         }
         Action::RequestQuit => state.screen = Screen::QuitConfirm,
@@ -2121,6 +2142,7 @@ mod tests {
             sort_direction: SortDirection::Ascending,
             show_hidden: true,
             drives: Vec::new(),
+            remote_hosts: Vec::new(),
             selected_drive: 0,
             conflict: None,
             long_view: false,

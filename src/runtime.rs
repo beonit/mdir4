@@ -405,6 +405,18 @@ impl EffectWorker {
                         Action::DiskInfoLoaded(disk.available_bytes(&path))
                     }
                     Effect::LoadDrives => Action::DrivesLoaded(disk.roots()),
+                    Effect::LoadSshHosts => {
+                        let discovery = match (
+                            crate::remote::openssh_hosts::default_ssh_config_path(),
+                            std::env::var_os("HOME").map(PathBuf::from),
+                        ) {
+                            (Some(config), Some(home)) => {
+                                crate::remote::openssh_hosts::discover_ssh_hosts(&config, &home)
+                            }
+                            _ => crate::remote::openssh_hosts::SshHostDiscovery::default(),
+                        };
+                        Action::SshHostsLoaded(discovery)
+                    }
                     Effect::LoadMcdChildren { node, path } => {
                         let result = filesystem.read_dir(&path).map(|entries| {
                             entries
@@ -1040,6 +1052,7 @@ mod tests {
             sort_direction: crate::model::directory::SortDirection::Ascending,
             show_hidden: true,
             drives: Vec::new(),
+            remote_hosts: Vec::new(),
             selected_drive: 0,
             conflict: None,
             long_view: false,
