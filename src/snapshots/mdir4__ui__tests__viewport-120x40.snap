@@ -3,7 +3,7 @@ source: src/ui.rs
 expression: "rendered(&wide, 120, 40)"
 ---
 /work/한 글 -folder                                                                                                       
-wide-density.txt                                                                                        8.0K ----- --:--
+  wide-density.txt                   8.0K ----- --:--                                                                   
                                                                                                                         
                                                                                                                         
                                                                                                                         
@@ -38,7 +38,7 @@ wide-density.txt                                                                
                                                                                                                         
                                                                                                                         
                                                                                                                         
-wide-density.txt   FILE   8.0K   ----                                                                                   
-Files 1  Dirs 0  Selected 0 / 0B  Free --  Items 1                                                                      
-Enter Open  Backspace Parent  Space Mark  R Refresh  Ctrl+Q Quit                                                        
-1Help 2Ren 3View 4Edit 5Copy 6Move 7Dir 8Del 9--- 10MCD 11QCD 12Menu
+                                                                                                                        
+                                                                                                                        
+wide-density.txt  8.0K FILE                                                           │ 1 File  0 Dir  Sel 0/0B  Free --
+F1 Help   F2 Ren    F3 View   F4 Edit   F5 Copy   F6 Move   F7 Dir    F8 Del    F9 ---    F10 MCD   F11 QCD   F12 Menu

@@ -53,6 +53,26 @@ fn cli_read_backend_discovers_status_and_reads_unstaged_and_combined_diffs_witho
 }
 
 #[test]
+fn directory_status_returns_one_cached_map_source_for_the_refresh() {
+    let temp = tempdir().unwrap();
+    git(temp.path(), &["init", "-q"]);
+    fs::write(temp.path().join("scratch.txt"), "new\n").unwrap();
+
+    let snapshot = GitCliReadBackend::directory_status(temp.path())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        snapshot.worktree_root.canonicalize().unwrap(),
+        temp.path().canonicalize().unwrap()
+    );
+    assert_eq!(snapshot.rows.len(), 1);
+    assert_eq!(
+        snapshot.rows[0].status,
+        mdir4::plugins::git::model::GitStatus::Untracked
+    );
+}
+
+#[test]
 fn cli_mutation_backend_stages_and_unstages_only_the_requested_path() {
     let temp = tempdir().unwrap();
     git(temp.path(), &["init", "-q"]);
@@ -121,6 +141,61 @@ fn cli_mutation_backend_commits_staged_changes_with_the_configured_identity() {
         String::from_utf8_lossy(&subject.stdout).trim(),
         "add new file"
     );
+}
+
+#[test]
+fn cli_mutation_backend_amends_head_without_changing_its_message() {
+    let temp = tempdir().unwrap();
+    git(temp.path(), &["init", "-q"]);
+    git(temp.path(), &["config", "user.name", "Test"]);
+    git(
+        temp.path(),
+        &["config", "user.email", "test@example.invalid"],
+    );
+    fs::write(temp.path().join("note.txt"), "one\n").unwrap();
+    git(temp.path(), &["add", "note.txt"]);
+    git(temp.path(), &["commit", "-qm", "original subject"]);
+    fs::write(temp.path().join("note.txt"), "two\n").unwrap();
+    git(temp.path(), &["add", "note.txt"]);
+
+    GitCliMutationBackend::new(temp.path())
+        .execute(&mdir4::plugins::git::local::MutationPlan {
+            kind: MutationKind::Amend,
+            targets: Vec::new(),
+        })
+        .unwrap();
+
+    let log = Command::new("git")
+        .arg("-C")
+        .arg(temp.path())
+        .args(["log", "--format=%s"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&log.stdout).trim(),
+        "original subject"
+    );
+    assert_eq!(
+        fs::read_to_string(temp.path().join("note.txt")).unwrap(),
+        "two\n"
+    );
+}
+
+#[test]
+fn cli_branch_backend_fetches_and_prunes_configured_remotes() {
+    let root = tempdir().unwrap();
+    let repository = root.path().join("work");
+    let remote = root.path().join("remote.git");
+    fs::create_dir(&repository).unwrap();
+    fs::create_dir(&remote).unwrap();
+    git(&repository, &["init", "-q"]);
+    git(&remote, &["init", "--bare", "-q"]);
+    git(
+        &repository,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+
+    GitCliBranchBackend.fetch(&repository).unwrap();
 }
 
 #[test]

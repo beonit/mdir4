@@ -66,6 +66,10 @@ pub enum Action {
         path: PathBuf,
         result: Result<DirectoryListing, FsError>,
     },
+    DirectoryGitStatusLoaded {
+        directory: PathBuf,
+        result: Result<Option<crate::plugins::git::model::DirectoryStatus>, String>,
+    },
     DiskInfoLoaded(Result<u64, String>),
     FileLaunched {
         path: PathBuf,
@@ -208,6 +212,9 @@ pub enum Action {
     MenuOpen,
     ShowSettings,
     ShowGitStatus,
+    ShowSelectedGitDiff,
+    GitStageBrowserSelection,
+    GitUnstageBrowserSelection,
     RefreshGitStatus,
     GitStatusLoaded {
         result: Result<Vec<crate::plugins::git::model::GitStatusRow>, String>,
@@ -220,6 +227,9 @@ pub enum Action {
     GitStage,
     GitUnstage,
     ShowGitCommit,
+    ShowGitAmend,
+    GitFetch,
+    GitFetchCompleted(Result<(), String>),
     ShowGitStash,
     ShowGitStashSave,
     GitStashMove(i32),
@@ -288,6 +298,7 @@ pub enum Action {
 pub enum Effect {
     LoadDirectory(PathBuf),
     LoadDiskInfo(PathBuf),
+    LoadDirectoryGitStatus(PathBuf),
     LaunchFile(PathBuf),
     ClassifyFile(PathBuf),
     Rename {
@@ -338,6 +349,10 @@ pub enum Effect {
         directory: PathBuf,
         path: crate::plugins::git::model::RepoRelativePath,
     },
+    LoadGitDiffForPath {
+        directory: PathBuf,
+        path: PathBuf,
+    },
     LoadGitLog(PathBuf),
     LoadGitLogDetail {
         directory: PathBuf,
@@ -356,6 +371,7 @@ pub enum Effect {
         directory: PathBuf,
         target: String,
     },
+    FetchGit(PathBuf),
     LoadGitStashes(PathBuf),
     ApplyGitStash {
         directory: PathBuf,
@@ -369,6 +385,17 @@ pub enum Effect {
         directory: PathBuf,
         plan: crate::plugins::git::local::MutationPlan,
     },
+    RunGitPathMutation {
+        directory: PathBuf,
+        paths: Vec<PathBuf>,
+        operation: BrowserGitPathOperation,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserGitPathOperation {
+    Stage,
+    Unstage,
 }
 
 #[derive(Debug)]
@@ -506,6 +533,23 @@ impl AppState {
     }
 }
 
+fn is_attention_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "failed",
+        "could not",
+        "cannot",
+        "unavailable",
+        "denied",
+        "error",
+        "warning",
+        "busy",
+        "not found",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+}
+
 pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
     match action {
         Action::Started => {
@@ -515,7 +559,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::Resize(viewport) => state.viewport = viewport,
         Action::DirectoryLoaded { path, result } => match result {
             Ok(listing) => {
-                let is_empty = listing.is_empty();
+                let attention = state
+                    .message
+                    .take()
+                    .filter(|message| is_attention_message(message));
                 let same_directory = state.current_path == path;
                 let selected_path = same_directory
                     .then(|| state.selected_entry().map(|entry| entry.path.clone()))
@@ -539,12 +586,18 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                     state.selected = 0;
                     state.marked.clear();
                 }
-                state.message = if is_empty {
-                    Some("Empty directory".to_string())
-                } else {
-                    None
-                };
-                return vec![Effect::LoadDiskInfo(state.current_path.clone())];
+                state.message = attention;
+                state.plugin_decorations.retain(|_, decoration| {
+                    !decoration.text.spans.iter().any(|span| {
+                        span.role
+                            .as_ref()
+                            .is_some_and(|role| role.as_str().starts_with("plugin.git."))
+                    })
+                });
+                return vec![
+                    Effect::LoadDiskInfo(state.current_path.clone()),
+                    Effect::LoadDirectoryGitStatus(state.current_path.clone()),
+                ];
             }
             Err(error) => {
                 state.message = Some(format!("Could not open directory: {error}"));
@@ -554,11 +607,49 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             Ok(bytes) => state.free_space = Some(bytes),
             Err(error) => state.message = Some(format!("Disk information unavailable: {error}")),
         },
-        Action::FileLaunched { path, result } => {
-            state.message = Some(match result {
-                Ok(()) => format!("Opened {}", path.display()),
-                Err(error) => error,
+        Action::DirectoryGitStatusLoaded { directory, result } => {
+            if directory != state.current_path {
+                return Vec::new();
+            }
+            state.plugin_decorations.retain(|_, decoration| {
+                !decoration.text.spans.iter().any(|span| {
+                    span.role
+                        .as_ref()
+                        .is_some_and(|role| role.as_str().starts_with("plugin.git."))
+                })
             });
+            if let Ok(Some(status)) = result {
+                let statuses: BTreeMap<std::ffi::OsString, crate::plugins::git::model::GitStatus> =
+                    status
+                        .rows
+                        .into_iter()
+                        .filter(|row| {
+                            row.path.as_path().parent().unwrap_or(Path::new(""))
+                                == status.directory_prefix
+                        })
+                        .filter_map(|row| {
+                            row.path
+                                .as_path()
+                                .file_name()
+                                .map(|name| (name.to_os_string(), row.status))
+                        })
+                        .collect();
+                for entry in &state.entries {
+                    let entry_id = entry.path.display().to_string();
+                    let git_status = statuses
+                        .get(&entry.name)
+                        .copied()
+                        .unwrap_or(crate::plugins::git::model::GitStatus::Clean);
+                    let decoration = crate::plugins::git::decoration::browser_decoration_for_entry(
+                        entry_id.clone(),
+                        git_status,
+                    );
+                    state.plugin_decorations.insert(entry_id, decoration);
+                }
+            }
+        }
+        Action::FileLaunched { path: _, result } => {
+            state.message = result.err();
         }
         Action::Tick => {}
         Action::Move(direction) => {
@@ -625,6 +716,44 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.git_status_view.get_or_insert_default();
             state.screen = Screen::GitStatus;
             return vec![Effect::LoadGitStatus(state.current_path.clone())];
+        }
+        Action::ShowSelectedGitDiff => {
+            if let Some(path) = state
+                .selected_entry()
+                .and_then(|entry| (entry.kind != EntryKind::Parent).then(|| entry.path.clone()))
+            {
+                state.git_diff = Some((path.clone(), ViewerState::Loading { generation: 1 }));
+                state.screen = Screen::GitDiff;
+                return vec![Effect::LoadGitDiffForPath {
+                    directory: state.current_path.clone(),
+                    path,
+                }];
+            }
+            state.message = Some("Select a repository file to diff.".into());
+        }
+        action @ (Action::GitStageBrowserSelection | Action::GitUnstageBrowserSelection) => {
+            let paths = state.operation_targets();
+            if paths.is_empty() {
+                state.message = Some("Select at least one repository file.".into());
+            } else {
+                let operation = if matches!(action, Action::GitStageBrowserSelection) {
+                    BrowserGitPathOperation::Stage
+                } else {
+                    BrowserGitPathOperation::Unstage
+                };
+                state.message = Some(
+                    match operation {
+                        BrowserGitPathOperation::Stage => "Git add in progress...",
+                        BrowserGitPathOperation::Unstage => "Git unstage in progress...",
+                    }
+                    .into(),
+                );
+                return vec![Effect::RunGitPathMutation {
+                    directory: state.current_path.clone(),
+                    paths,
+                    operation,
+                }];
+            }
         }
         Action::RefreshGitStatus => {
             if state.screen == Screen::GitStatus {
@@ -776,6 +905,28 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 None,
             ));
             state.screen = Screen::InputDialog;
+        }
+        Action::ShowGitAmend => {
+            state.confirm_dialog = Some(ConfirmDialog {
+                title: "Amend Git Commit".into(),
+                message: "Amend HEAD with the staged changes and keep its commit message? This rewrites history."
+                    .into(),
+                confirm_label: "Amend".into(),
+                operation: ConfirmOperation::GitAmend,
+            });
+            state.screen = Screen::ConfirmDialog;
+        }
+        Action::GitFetch => {
+            state.message = Some("Fetching Git remotes...".into());
+            return vec![Effect::FetchGit(state.current_path.clone())];
+        }
+        Action::GitFetchCompleted(result) => {
+            state.message = Some(match result {
+                Ok(()) => "Git fetch completed.".into(),
+                Err(error) => format!("Git fetch failed: {error}"),
+            });
+            state.screen = Screen::Main;
+            return vec![Effect::LoadDirectory(state.current_path.clone())];
         }
         Action::ShowGitLog => {
             state.git_log.clear();
@@ -1119,10 +1270,9 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::ExternalEditorFinished { path, result } => {
             state.editor = None;
             state.screen = Screen::Main;
-            state.message = Some(match result {
-                Ok(()) => format!("Finished editing {}", path.display()),
-                Err(error) => format!("Editor failed for {}: {error}", path.display()),
-            });
+            state.message = result
+                .err()
+                .map(|error| format!("Editor failed for {}: {error}", path.display()));
             return vec![Effect::LoadDirectory(state.current_path.clone())];
         }
         Action::FileClassified { path, result } => {
@@ -1326,6 +1476,17 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 }
             } else if let Some(confirm) = state.confirm_dialog.take() {
                 match confirm.operation {
+                    ConfirmOperation::GitAmend => {
+                        state.screen = Screen::GitStatus;
+                        state.message = Some("Amending Git commit...".into());
+                        return vec![Effect::RunGitMutation {
+                            directory: state.current_path.clone(),
+                            plan: crate::plugins::git::local::MutationPlan {
+                                kind: crate::plugins::git::local::MutationKind::Amend,
+                                targets: Vec::new(),
+                            },
+                        }];
+                    }
                     ConfirmOperation::Delete { targets, permanent } => {
                         state.screen = Screen::Progress;
                         return vec![Effect::Delete {
@@ -1585,7 +1746,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                     editor.mark_saved(modified);
                 }
                 state.screen = Screen::Editor;
-                state.message = Some(format!("Saved {}", path.display()));
+                state.message = None;
             }
             Err(FsError::AlreadyExists { .. }) => {
                 state.confirm_dialog = Some(ConfirmDialog {
@@ -1607,13 +1768,15 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::FileOperationCompleted { message, result } => {
             state.screen = Screen::Main;
             state.marked.clear();
-            state.message = Some(match result {
-                Ok(summary) => format!(
-                    "{message}: {} succeeded, {} failed, {} skipped",
-                    summary.succeeded, summary.failed, summary.skipped
-                ),
-                Err(error) => format!("{message} failed: {error}"),
-            });
+            state.message = match result {
+                Ok(summary) if summary.failed == 0 && summary.skipped == 0 => None,
+                Ok(summary) => Some(format!(
+                    "{message}: {} failed, {} skipped",
+                    summary.failed, summary.skipped
+                )),
+                Err(FsError::Cancelled { .. }) => None,
+                Err(error) => Some(format!("{message} failed: {error}")),
+            };
             return vec![Effect::LoadDirectory(state.current_path.clone())];
         }
         Action::OperationProgress(summary) => {
@@ -1623,7 +1786,9 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             ));
         }
         Action::CancelOperation => {
-            state.message = Some("Cancelling operation...".to_string());
+            state.screen = Screen::Main;
+            state.message =
+                Some("Cancellation requested; operation may still be finishing.".into());
             return vec![Effect::CancelOperation];
         }
         Action::ConflictRequested { source, target } => {
@@ -1991,6 +2156,9 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             return vec![Effect::LoadDirectory(state.current_path.clone())];
         }
         Action::OpenDrivePicker => {
+            if state.screen == Screen::Mcd {
+                state.mcd = None;
+            }
             state.screen = Screen::DrivePicker;
             state.drives.clear();
             state.remote_hosts.clear();
@@ -2165,7 +2333,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
         Action::RequestQuit => state.screen = Screen::QuitConfirm,
         Action::CloseOverlay => {
-            if state.screen == Screen::GitLogDetail {
+            if state.screen == Screen::Help && state.mcd.is_some() {
+                state.screen = Screen::Mcd;
+                return Vec::new();
+            } else if state.screen == Screen::GitLogDetail {
                 state.git_log_detail = None;
                 state.screen = Screen::GitLog;
                 return Vec::new();
@@ -2185,6 +2356,8 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 state.git_diff = None;
                 state.screen = Screen::GitStatus;
                 return Vec::new();
+            } else if state.screen == Screen::Mcd {
+                state.mcd = None;
             } else if state.screen == Screen::Viewer {
                 state.viewer = None;
             } else if state.screen == Screen::Editor {
@@ -2505,6 +2678,165 @@ mod tests {
             ),
             vec![Effect::LaunchFile(PathBuf::from("/test/unclassified"))]
         );
+
+        reduce(
+            &mut app,
+            Action::FileLaunched {
+                path: PathBuf::from("/test/unclassified"),
+                result: Ok(()),
+            },
+        );
+        assert!(app.message.is_none());
+        reduce(
+            &mut app,
+            Action::FileLaunched {
+                path: PathBuf::from("/test/unclassified"),
+                result: Err("Cannot open file: permission denied".into()),
+            },
+        );
+        assert_eq!(
+            app.message.as_deref(),
+            Some("Cannot open file: permission denied")
+        );
+    }
+
+    #[test]
+    fn cancelling_a_stalled_operation_releases_the_progress_modal_immediately() {
+        let mut app = state();
+        app.screen = Screen::Progress;
+        app.message = Some("Deleting...".into());
+
+        assert_eq!(
+            reduce(&mut app, Action::CancelOperation),
+            vec![Effect::CancelOperation]
+        );
+        assert_eq!(app.screen, Screen::Main);
+        assert!(
+            app.message
+                .as_deref()
+                .unwrap()
+                .contains("Cancellation requested")
+        );
+
+        reduce(
+            &mut app,
+            Action::OperationProgress(OperationSummary {
+                failed: 1,
+                ..OperationSummary::default()
+            }),
+        );
+        assert_eq!(app.screen, Screen::Main);
+
+        let effects = reduce(
+            &mut app,
+            Action::FileOperationCompleted {
+                message: "Delete".into(),
+                result: Err(FsError::Io {
+                    operation: crate::ports::filesystem::FsOperation::Remove,
+                    path: PathBuf::from("/test/protected.txt"),
+                    kind: std::io::ErrorKind::PermissionDenied,
+                }),
+            },
+        );
+        assert_eq!(app.screen, Screen::Main);
+        assert!(
+            app.message
+                .as_deref()
+                .unwrap()
+                .starts_with("Delete failed:")
+        );
+        assert_eq!(
+            effects,
+            vec![Effect::LoadDirectory(app.current_path.clone())]
+        );
+
+        let path = app.current_path.clone();
+        let entries = app.entries.clone();
+        reduce(
+            &mut app,
+            Action::DirectoryLoaded {
+                path: path.clone(),
+                result: Ok(DirectoryListing { path, entries }),
+            },
+        );
+        assert!(
+            app.message
+                .as_deref()
+                .unwrap()
+                .starts_with("Delete failed:")
+        );
+    }
+
+    #[test]
+    fn directory_git_status_is_mapped_once_and_stale_results_are_ignored() {
+        let mut app = state();
+        app.entries = vec![
+            entry("main.rs", EntryKind::File),
+            entry("clean.txt", EntryKind::File),
+        ];
+        let status = crate::plugins::git::model::DirectoryStatus {
+            worktree_root: PathBuf::from("/test"),
+            directory_prefix: PathBuf::new(),
+            rows: vec![crate::plugins::git::model::GitStatusRow {
+                path: crate::plugins::git::model::RepoRelativePath::new("main.rs").unwrap(),
+                status: crate::plugins::git::model::GitStatus::Modified,
+                old_path: None,
+            }],
+        };
+
+        assert!(
+            reduce(
+                &mut app,
+                Action::DirectoryGitStatusLoaded {
+                    directory: PathBuf::from("/elsewhere"),
+                    result: Ok(Some(status.clone())),
+                },
+            )
+            .is_empty()
+        );
+        assert!(app.plugin_decorations.is_empty());
+
+        reduce(
+            &mut app,
+            Action::DirectoryGitStatusLoaded {
+                directory: PathBuf::from("/test"),
+                result: Ok(Some(status)),
+            },
+        );
+        let modified = app.plugin_decorations.get("/test/main.rs").unwrap();
+        let clean = app.plugin_decorations.get("/test/clean.txt").unwrap();
+        assert_eq!(modified.text.spans[0].text, "M ");
+        assert_eq!(clean.text.spans[0].text, "  ");
+        assert_eq!(app.plugin_decorations.len(), 2);
+    }
+
+    #[test]
+    fn browser_git_shortcuts_target_selection_and_confirm_amend() {
+        let mut app = state();
+        let selected = app.entries[0].path.clone();
+
+        assert_eq!(
+            reduce(&mut app, Action::GitStageBrowserSelection),
+            vec![Effect::RunGitPathMutation {
+                directory: PathBuf::from("/test"),
+                paths: vec![selected.clone()],
+                operation: BrowserGitPathOperation::Stage,
+            }]
+        );
+        assert_eq!(
+            reduce(&mut app, Action::ShowSelectedGitDiff),
+            vec![Effect::LoadGitDiffForPath {
+                directory: PathBuf::from("/test"),
+                path: selected,
+            }]
+        );
+
+        reduce(&mut app, Action::ShowGitAmend);
+        assert_eq!(app.screen, Screen::ConfirmDialog);
+        assert!(matches!(
+            app.confirm_dialog.as_ref().map(|dialog| &dialog.operation),
+            Some(ConfirmOperation::GitAmend)
+        ));
     }
 
     #[test]
@@ -2528,6 +2860,10 @@ mod tests {
                 path: PathBuf::from("/"),
             }]
         );
+        reduce(&mut app, Action::ShowHelp);
+        assert_eq!(app.screen, Screen::Help);
+        reduce(&mut app, Action::CloseOverlay);
+        assert_eq!(app.screen, Screen::Mcd);
     }
 
     #[test]

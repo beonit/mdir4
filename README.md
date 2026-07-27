@@ -1,29 +1,47 @@
 # Mdir4
 
-Mdir4 is a Rust terminal file manager that recreates the keyboard-driven,
-multi-column navigation experience of Mdir III.
+**A fast, keyboard-first terminal file manager inspired by Mdir III.**
 
-## Available features
+Mdir4 brings the dense, function-key-driven workflow of classic file managers to modern
+macOS and Linux terminals. Browse with spatial navigation, manage files safely, and keep
+your hands on the keyboard.
 
-- Real directory listing with a synthetic parent `..` entry
-- Directories-first, ascending name sort
-- One to six adaptive, column-major columns
-- Spatial Up/Down/Left/Right navigation
-- Home/End and Page Up/Page Down
-- Enter to open a directory, classify a regular file, then edit text or launch other files
-- Space/Insert/Ctrl+A marking
-- R to refresh
-- F1 help
-- Unicode filename truncation based on terminal cell width
-- Safe warning below the minimum 60×15 terminal size
-- Ctrl+Q confirmation to quit and restore the terminal
+![Mdir4 browsing a project directory](docs/images/mdir4-root.png)
 
-Rename, View, Edit, Copy, Move, Delete, MCD, QCD, Menu, configuration, themes, and user keymaps
-are implemented. Enter classifies a regular file with `file --brief --mime-type`: text MIME opens
-in `$EDITOR` (or the built-in editor when `$EDITOR` is unavailable), while other files use the
-platform default application.
+## Highlights
 
-## Run
+- **Adaptive directory browser** — one to six column-major columns that use the available
+  terminal space, with Short and Long views.
+- **Spatial keyboard navigation** — arrow keys, paging, Home/End, marks, and familiar
+  function-key commands.
+- **Everyday file management** — rename, view, edit, copy, move, create directories, and
+  delete. Normal deletion goes to the system trash; permanent deletion requires
+  `Shift+F8` and confirmation.
+- **Built for real filenames** — Unicode-aware cell-width rendering, directories-first
+  sorting, hidden-file filtering, and metadata fallbacks that keep a listing usable.
+- **Configurable** — TOML configuration, themes, user keymaps, saved locations (QCD),
+  multi-column directory navigation (MCD), and a keyboard-accessible menu.
+- **Git-aware browsing** — Git status decorations and a built-in status view for local
+  repositories.
+
+![Mdir4 showing source files and Git decorations](docs/images/mdir4-source-tree.png)
+
+## Install
+
+### Build from source
+
+Mdir4 uses stable Rust. The repository pins the required toolchain in
+[`rust-toolchain.toml`](rust-toolchain.toml).
+
+```sh
+git clone git@github.com:beonit/mdir4.git
+cd mdir4
+cargo build --release --locked
+```
+
+The executable is then available at `target/release/mdir4`.
+
+### Run
 
 Start in the current directory:
 
@@ -31,40 +49,51 @@ Start in the current directory:
 cargo run --locked
 ```
 
-Start in a specified directory:
+Or open a directory directly:
 
 ```sh
 cargo run --locked -- /path/to/directory
 ```
 
-Build and run a release binary:
+After a release build:
 
 ```sh
-cargo build --release --locked
 ./target/release/mdir4 /path/to/directory
 ```
 
-## Keys
+## Key bindings
 
 | Key | Action |
-|---|---|
-| `Up / Down` | Move vertically; cross pages at the first/last visible item |
-| `Left / Right` | Move between columns and adjacent pages |
-| `Enter` | Open directory, classify a regular file, then edit text or launch it |
-| `Backspace` | Go to parent directory |
-| `Home / End` | Select first/last item |
-| `PgUp / PgDn` | Select previous/next page |
-| `Space` | Toggle mark on current item |
-| `Insert` | Toggle mark and move down |
-| `Ctrl+A` | Mark all markable items |
-| `R` | Refresh |
-| `F1` | Open help |
-| `F3` | Open the selected file in the full-screen viewer |
-| `F4` | Edit the selected file with `$EDITOR` or the built-in editor |
-| `Esc` | Close help or clear a message |
-| `Ctrl+Q` | Open quit confirmation |
+| --- | --- |
+| `↑` `↓` `←` `→` | Navigate items, columns, and page boundaries spatially |
+| `Enter` / `Backspace` | Open an item or return to the parent directory |
+| `Home` `End` / `PgUp` `PgDn` | Jump to the first/last item or previous/next page |
+| `Space` / `Insert` / `Ctrl+A` | Mark an item / mark and advance / mark all |
+| `R` / `S` / `Ctrl+S` / `H` | Refresh / change sort key / reverse sort / toggle hidden files |
+| `Tab` | Toggle Short and Long view |
+| `F1`–`F8` | Help, Rename, View, Edit, Copy, Move, Make directory, Delete |
+| `F10` / `F11` / `F12` | MCD directory tree / QCD saved locations / Menu |
+| `Ctrl+G` | Open Git status for the current local repository |
+| `Ctrl+Q` | Quit with confirmation |
 
-## Verify
+The footer always shows the active F1–F12 commands. Press `F1` inside the app for the
+context-sensitive command list.
+
+## Configuration
+
+Configuration is stored as TOML and written atomically. Use `Alt+O` to open Settings.
+By default, the file is stored at:
+
+- `$MDIR4_CONFIG`, when that environment variable is set
+- otherwise `$XDG_CONFIG_HOME/mdir4/config.toml`
+- otherwise `~/.config/mdir4/config.toml`
+
+Mdir4 preserves a broken configuration as a backup and starts with defaults rather than
+preventing the file manager from opening.
+
+## Development
+
+Run the full local quality gate before submitting a change:
 
 ```sh
 cargo fmt --all -- --check
@@ -72,10 +101,17 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --all-features --locked
 ```
 
-See the [`documentation map`](docs/README.md) for document priority, the active milestone,
-and detailed implementation plans.
+GitHub Actions runs the same checks and creates Linux and macOS release-candidate archives
+for every successful build.
 
-Post-v1 plans:
+## Project documentation
 
-- [`Git built-in`](docs/plugins/git/README.md)
-- [`SSH Remote / Remote Drive`](docs/remote/README.md)
+- [Development setup](docs/development.md)
+- [Product contract and interaction rules](docs/implementation-plan/01-product-contract.md)
+- [Architecture decisions](docs/architecture)
+- [Documentation map](docs/README.md)
+
+## Platform support
+
+Mdir4 targets modern Linux terminals and macOS Terminal/iTerm-style terminals. A terminal
+of at least **60×15** is required; **80×25** is the reference layout.

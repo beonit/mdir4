@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod app;
 pub mod config;
+pub mod file_type;
 pub mod fs;
 pub mod input;
 pub mod layout;

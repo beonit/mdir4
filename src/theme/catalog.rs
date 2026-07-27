@@ -107,7 +107,7 @@ fn default_base() -> String {
     "classic".to_string()
 }
 
-fn all_roles() -> [ThemeRole; 18] {
+fn all_roles() -> [ThemeRole; 32] {
     use ThemeRole::*;
     [
         MainBackground,
@@ -116,6 +116,10 @@ fn all_roles() -> [ThemeRole; 18] {
         StatusBar,
         MessageBar,
         FunctionBar,
+        FunctionKey,
+        FunctionLabel,
+        Viewer,
+        ViewerBorder,
         Dialog,
         DialogBorder,
         Warning,
@@ -123,8 +127,18 @@ fn all_roles() -> [ThemeRole; 18] {
         EntryDirectory,
         EntryFile,
         EntryExecutable,
+        EntryConfig,
+        EntryDocument,
+        EntrySource,
         EntryArchive,
         EntryOther,
+        GitModified,
+        GitAdded,
+        GitDeleted,
+        GitRenamed,
+        GitUntracked,
+        GitConflict,
+        GitIgnored,
         EntryCursor,
         EntryMarked,
         EntryCursorMarked,

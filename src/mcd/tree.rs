@@ -158,26 +158,25 @@ impl DirectoryTree {
     }
 
     pub fn move_selection(&mut self, delta: i32) {
-        let len = self.visible_rows().len();
-        self.selected = if delta < 0 {
-            self.selected.saturating_sub(1)
-        } else {
-            (self.selected + 1).min(len.saturating_sub(1))
+        let Some(selected) = self.selected_node().map(|node| node.id) else {
+            return;
         };
+        let siblings = self.nodes[&selected]
+            .parent
+            .and_then(|parent| self.nodes.get(&parent).map(|node| node.children.clone()))
+            .unwrap_or_else(|| self.roots.clone());
+        let Some(position) = siblings.iter().position(|id| *id == selected) else {
+            return;
+        };
+        let target = position
+            .saturating_add_signed(delta as isize)
+            .min(siblings.len().saturating_sub(1));
+        self.select_node(siblings[target]);
     }
 
     pub fn page_move(&mut self, delta_pages: i32, page_size: usize) {
-        let step = page_size.max(1) as i32;
-        let delta = delta_pages.saturating_mul(step);
-        let len = self.visible_rows().len();
-        if delta < 0 {
-            self.selected = self.selected.saturating_sub(delta.unsigned_abs() as usize);
-        } else {
-            self.selected = self
-                .selected
-                .saturating_add(delta as usize)
-                .min(len.saturating_sub(1));
-        }
+        let delta = delta_pages.saturating_mul(page_size.max(1) as i32);
+        self.move_selection(delta);
     }
 
     pub fn visible_window(&self, height: usize) -> (usize, Vec<VisibleRow>) {
@@ -196,12 +195,7 @@ impl DirectoryTree {
         let Some(id) = self.visible_rows().get(self.selected).map(|row| row.id) else {
             return;
         };
-        let Some(node) = self.nodes.get(&id) else {
-            return;
-        };
-        if node.expanded {
-            self.nodes.get_mut(&id).unwrap().expanded = false;
-        } else if let Some(parent) = node.parent
+        if let Some(parent) = self.nodes.get(&id).and_then(|node| node.parent)
             && let Some(index) = self.visible_rows().iter().position(|row| row.id == parent)
         {
             self.selected = index;
@@ -213,6 +207,9 @@ impl DirectoryTree {
             && let Some(node) = self.nodes.get_mut(&id)
         {
             node.expanded = true;
+            if let Some(child) = node.children.first().copied() {
+                self.select_node(child);
+            }
         }
     }
     pub fn set_filter(&mut self, value: String) {
@@ -317,7 +314,7 @@ mod tests {
         tree.page_move(5, 5);
 
         let (start, rows) = tree.visible_window(5);
-        assert_eq!(start, 21);
+        assert_eq!(start, 22);
         assert_eq!(rows.len(), 5);
         assert_eq!(
             rows.last().unwrap().id,
@@ -337,11 +334,37 @@ mod tests {
         );
         tree.expand();
         tree.page_move(2, 5);
-        assert_eq!(tree.selected, 10);
+        assert_eq!(tree.selected, 11);
         tree.page_move(-1, 5);
-        assert_eq!(tree.selected, 5);
+        assert_eq!(tree.selected, 6);
         tree.page_move(-99, 5);
-        assert_eq!(tree.selected, 0);
+        assert_eq!(tree.selected, 1);
+    }
+
+    #[test]
+    fn hierarchy_navigation_moves_across_siblings_and_into_parent_child_depths() {
+        let mut tree = DirectoryTree::default();
+        let root = tree.add_root(PathBuf::from("/"));
+        tree.set_children(
+            root,
+            ["/Applications", "/Library", "/Users"]
+                .map(PathBuf::from)
+                .to_vec(),
+        );
+        tree.expand();
+        assert_eq!(
+            tree.selected_node().unwrap().path,
+            Path::new("/Applications")
+        );
+        tree.move_selection(1);
+        assert_eq!(tree.selected_node().unwrap().path, Path::new("/Library"));
+        tree.collapse_or_parent();
+        assert_eq!(tree.selected_node().unwrap().path, Path::new("/"));
+        tree.expand();
+        assert_eq!(
+            tree.selected_node().unwrap().path,
+            Path::new("/Applications")
+        );
     }
 
     #[test]

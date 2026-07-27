@@ -82,4 +82,8 @@ impl GitCliBranchBackend {
         }
         Self::run(directory, &["rebase", target]).map(|_| ())
     }
+
+    pub fn fetch(&self, directory: &Path) -> Result<(), String> {
+        Self::run(directory, &["fetch", "--all", "--prune"]).map(|_| ())
+    }
 }

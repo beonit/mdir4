@@ -23,9 +23,7 @@ impl FileSystem for RealFileSystem {
             let entry = result.map_err(|error| map_error(error, operation, path))?;
             let entry_path = entry.path();
             let metadata = resolve_entry_metadata(
-                entry
-                    .metadata()
-                    .map(|metadata| metadata_from_std(&metadata)),
+                fs::symlink_metadata(&entry_path).map(|metadata| metadata_from_std(&metadata)),
                 || {
                     entry
                         .file_type()
@@ -275,9 +273,19 @@ fn attributes_from_std(metadata: &fs::Metadata) -> EntryAttributes {
             hidden: value & 0x2 != 0,
             system: value & 0x4 != 0,
             archive: value & 0x20 != 0,
+            executable: false,
         };
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        EntryAttributes {
+            read_only: metadata.permissions().readonly(),
+            executable: metadata.permissions().mode() & 0o111 != 0,
+            ..EntryAttributes::default()
+        }
+    }
+    #[cfg(all(not(unix), not(windows)))]
     {
         EntryAttributes {
             read_only: metadata.permissions().readonly(),

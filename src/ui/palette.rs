@@ -3,7 +3,9 @@ use std::sync::{OnceLock, RwLock};
 use ratatui::style::Style;
 
 use crate::{
-    fs::{EntryKind, FileEntry},
+    file_type::{FileTypeClass, classify},
+    fs::FileEntry,
+    plugins::api::StyleRoleId,
     theme::{catalog::Theme, schema::ThemeRole},
 };
 
@@ -31,29 +33,31 @@ pub fn entry(entry: &FileEntry, cursor: bool, marked: bool) -> Style {
 }
 
 fn entry_role(entry: &FileEntry) -> ThemeRole {
-    match entry.kind {
-        EntryKind::Parent | EntryKind::Directory => ThemeRole::EntryDirectory,
-        EntryKind::File if extension_is(entry, &["exe", "com", "bat", "cmd"]) => {
-            ThemeRole::EntryExecutable
-        }
-        EntryKind::File if extension_is(entry, &["zip", "rar", "7z", "arj", "tar", "gz"]) => {
-            ThemeRole::EntryArchive
-        }
-        EntryKind::File => ThemeRole::EntryFile,
-        EntryKind::Other => ThemeRole::EntryOther,
+    match classify(entry) {
+        FileTypeClass::Directory => ThemeRole::EntryDirectory,
+        FileTypeClass::Special => ThemeRole::EntryOther,
+        FileTypeClass::Executable => ThemeRole::EntryExecutable,
+        FileTypeClass::Config => ThemeRole::EntryConfig,
+        FileTypeClass::Document => ThemeRole::EntryDocument,
+        FileTypeClass::Source => ThemeRole::EntrySource,
+        FileTypeClass::Archive => ThemeRole::EntryArchive,
+        FileTypeClass::Regular => ThemeRole::EntryFile,
     }
 }
 
-fn extension_is(entry: &FileEntry, extensions: &[&str]) -> bool {
-    entry
-        .path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            extensions
-                .iter()
-                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-        })
+pub fn decoration(role: Option<&StyleRoleId>, fallback: Style) -> Style {
+    let Some(role) = role else { return fallback };
+    let theme_role = match role.as_str() {
+        "plugin.git.modified" => ThemeRole::GitModified,
+        "plugin.git.added" => ThemeRole::GitAdded,
+        "plugin.git.deleted" => ThemeRole::GitDeleted,
+        "plugin.git.renamed" | "plugin.git.copied" => ThemeRole::GitRenamed,
+        "plugin.git.untracked" => ThemeRole::GitUntracked,
+        "plugin.git.conflict" => ThemeRole::GitConflict,
+        "plugin.git.ignored" => ThemeRole::GitIgnored,
+        _ => return fallback,
+    };
+    active().read().unwrap().style(theme_role)
 }
 
 #[cfg(test)]
@@ -63,6 +67,7 @@ mod tests {
     use ratatui::style::{Color, Modifier};
 
     use super::*;
+    use crate::fs::EntryKind;
 
     fn file(name: &str, kind: EntryKind) -> FileEntry {
         FileEntry::new(PathBuf::from(name), OsString::from(name), kind, 0)
@@ -73,23 +78,23 @@ mod tests {
         set_theme(&Theme::classic());
         assert_eq!(
             entry(&file("dir", EntryKind::Directory), false, false).fg,
-            Some(Color::Cyan)
+            Some(Color::LightCyan)
         );
         assert_eq!(
             entry(&file("run.EXE", EntryKind::File), false, false).fg,
-            Some(Color::Green)
+            Some(Color::LightGreen)
         );
         assert_eq!(
             entry(&file("data.zip", EntryKind::File), false, false).fg,
-            Some(Color::Magenta)
+            Some(Color::LightMagenta)
         );
         assert_eq!(
             entry(&file("note.txt", EntryKind::File), false, false).fg,
-            Some(Color::Gray)
+            Some(Color::White)
         );
         assert_eq!(
             entry(&file("device", EntryKind::Other), false, false).fg,
-            Some(Color::Yellow)
+            Some(Color::LightYellow)
         );
     }
 
@@ -102,7 +107,7 @@ mod tests {
         let marked = entry(&entry_value, false, true);
         let both = entry(&entry_value, true, true);
 
-        assert_eq!(normal.fg, Some(Color::Green));
+        assert_eq!(normal.fg, Some(Color::LightGreen));
         assert_eq!(
             (cursor.fg, cursor.bg),
             (Some(Color::Black), Some(Color::Cyan))

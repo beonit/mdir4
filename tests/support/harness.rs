@@ -188,6 +188,10 @@ fn apply(
                 path,
             },
             Effect::LoadDiskInfo(_) => Action::DiskInfoLoaded(Ok(free)),
+            Effect::LoadDirectoryGitStatus(directory) => Action::DirectoryGitStatusLoaded {
+                directory,
+                result: Ok(None),
+            },
             Effect::LaunchFile(path) => Action::FileLaunched {
                 path,
                 result: Ok(()),

@@ -127,6 +127,35 @@ fn control_g_opens_git_status_and_escape_closes_the_plugin_view() {
 }
 
 #[test]
+fn mcd_function_keys_map_to_the_commands_shown_in_its_footer() {
+    let registry = CommandRegistry::default();
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Mcd,
+            KeyChord::plain(KeyCode::Function(1)),
+            &registry
+        ),
+        Some(Action::ShowHelp)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Mcd,
+            KeyChord::plain(KeyCode::Function(2)),
+            &registry
+        ),
+        Some(Action::McdRescan)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Mcd,
+            KeyChord::plain(KeyCode::Function(3)),
+            &registry
+        ),
+        Some(Action::OpenDrivePicker)
+    ));
+}
+
+#[test]
 fn git_stash_screen_maps_save_apply_and_drop() {
     let registry = CommandRegistry::default();
     assert!(matches!(
@@ -267,5 +296,40 @@ fn control_q_and_uppercase_control_a_are_normalized() {
     assert!(matches!(
         registry.action_for(KeyChord::control(KeyCode::Character('A'))),
         Some(Action::SelectAll)
+    ));
+}
+
+#[test]
+fn control_function_keys_preserve_the_modifier_and_map_all_twelve_callbacks() {
+    let registry = CommandRegistry::default();
+    let expected = [
+        "ShowGitStatus",
+        "ShowSelectedGitDiff",
+        "GitStageBrowserSelection",
+        "GitUnstageBrowserSelection",
+        "ShowGitCommit",
+        "ShowGitAmend",
+        "ShowGitBranches",
+        "GitFetch",
+        "ShowGitLog",
+        "ShowGitStashSave",
+        "ShowGitBranches",
+        "ShowGitStatus",
+    ];
+    for (number, expected) in (1..=12).zip(expected) {
+        let event = KeyEvent::new(CrosstermKeyCode::F(number), KeyModifiers::CONTROL);
+        assert_eq!(
+            mapper::map_key(Screen::Main, event, &registry).map(|action| format!("{action:?}")),
+            Some(expected.to_string())
+        );
+    }
+
+    assert!(matches!(
+        mapper::map_key(
+            Screen::Main,
+            KeyEvent::new(CrosstermKeyCode::F(1), KeyModifiers::NONE),
+            &registry,
+        ),
+        Some(Action::ShowHelp)
     ));
 }

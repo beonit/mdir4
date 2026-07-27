@@ -16,6 +16,7 @@ pub struct EntryAttributes {
     pub hidden: bool,
     pub system: bool,
     pub archive: bool,
+    pub executable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

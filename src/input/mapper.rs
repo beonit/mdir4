@@ -479,6 +479,10 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
     if screen == Screen::Mcd {
         return match chord {
             KeyChord {
+                code: KeyCode::Function(1),
+                ..
+            } => Some(Action::ShowHelp),
+            KeyChord {
                 code: KeyCode::Escape,
                 ..
             } => Some(Action::CloseOverlay),

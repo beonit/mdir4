@@ -3,9 +3,9 @@ source: src/ui.rs
 expression: "rendered(&basic, 80, 25)"
 ---
 /work/한 글 -folder                                                               
-docs                                                           <DIR> ----- --:--
-README.md                                                       2.0K ----- --:--
-한 글 -문 서 .txt                                                    42B ----- --:--
+  docs                              <DIR> ----- --:--                           
+  README.md                          2.0K ----- --:--                           
+  한 글 -문 서 .txt                       42B ----- --:--                           
         ┌ Mdir4 Help ──────────────────────────────────────────────────┐        
         │Active commands                                               │        
         │Up          Up                                                │        
@@ -23,7 +23,7 @@ README.md                                                       2.0K ----- --:--
         │Ctrl+A      Select All                                        │        
         │R           Refresh                                           │        
         └──────────────────────────────────────────────────────────────┘        
-README.md   FILE   2.0K   ----                                                  
-Files 2  Dirs 1  Selected 1 / 2.0K  Free --  Items 3                            
-Enter Open  Backspace Parent  Space Mark  R Refresh  Ctrl+Q Quit                
-1Help 2Ren 3View 4Edit 5Copy 6Move 7Dir 8Del 9--- 10MCD 11QCD 12Menu
+                                                                                
+README.md  2.0K FILE                               │ F 2  D 1  S 1/2.0K  -- Free
+F1 Help       F2 Ren        F3 View      F4 Edit      F5 Copy      F6 Move      
+F7 Dir        F8 Del        F9 ---       F10 MCD      F11 QCD      F12 Menu

@@ -405,6 +405,10 @@ impl EffectWorker {
                     Effect::LoadDiskInfo(path) => {
                         Action::DiskInfoLoaded(disk.available_bytes(&path))
                     }
+                    Effect::LoadDirectoryGitStatus(directory) => {
+                        let result = GitCliReadBackend::directory_status(&directory);
+                        Action::DirectoryGitStatusLoaded { directory, result }
+                    }
                     Effect::LoadDrives => Action::DrivesLoaded(disk.roots()),
                     Effect::LoadSshHosts => {
                         let discovery = match (
@@ -473,6 +477,24 @@ impl EffectWorker {
                             result,
                         }
                     }
+                    Effect::LoadGitDiffForPath { directory, path } => {
+                        let backend = GitCliReadBackend;
+                        let result = backend.discover(&directory).and_then(|repository| {
+                            let repository = repository
+                                .ok_or_else(|| "Git repository not found.".to_string())?;
+                            let relative = path
+                                .strip_prefix(&repository.worktree_root)
+                                .map_err(|_| "Selected file is outside the Git worktree.")?;
+                            let relative =
+                                crate::plugins::git::model::RepoRelativePath::new(relative)?;
+                            backend.diff(
+                                &repository,
+                                &relative,
+                                crate::plugins::git::model::DiffTarget::Combined,
+                            )
+                        });
+                        Action::GitDiffLoaded { path, result }
+                    }
                     Effect::LoadGitLog(directory) => {
                         let result = GitCliHistoryBackend.log(&directory, 200);
                         Action::GitLogLoaded { result }
@@ -497,6 +519,9 @@ impl EffectWorker {
                         let result = GitCliBranchBackend.rebase(&directory, &target);
                         Action::GitRebaseCompleted { target, result }
                     }
+                    Effect::FetchGit(directory) => {
+                        Action::GitFetchCompleted(GitCliBranchBackend.fetch(&directory))
+                    }
                     Effect::LoadGitStashes(directory) => {
                         let result = GitCliStashBackend.list(&directory);
                         Action::GitStashesLoaded { result }
@@ -520,11 +545,54 @@ impl EffectWorker {
                             crate::plugins::git::local::MutationKind::Stage => "Stage",
                             crate::plugins::git::local::MutationKind::Unstage => "Unstage",
                             crate::plugins::git::local::MutationKind::Commit { .. } => "Commit",
+                            crate::plugins::git::local::MutationKind::Amend => "Amend",
                             crate::plugins::git::local::MutationKind::Stash { .. } => "Stash",
                             crate::plugins::git::local::MutationKind::Discard => "Discard",
                         }
                         .to_string();
                         let result = GitCliMutationBackend::new(directory).execute(&plan);
+                        Action::GitMutationCompleted { action, result }
+                    }
+                    Effect::RunGitPathMutation {
+                        directory,
+                        paths,
+                        operation,
+                    } => {
+                        let backend = GitCliReadBackend;
+                        let result = backend.discover(&directory).and_then(|repository| {
+                            let repository = repository
+                                .ok_or_else(|| "Git repository not found.".to_string())?;
+                            let targets: Result<Vec<_>, String> = paths
+                                .iter()
+                                .map(|path| {
+                                    let relative = path
+                                        .strip_prefix(&repository.worktree_root)
+                                        .map_err(|_| {
+                                            "Selected file is outside the Git worktree.".to_string()
+                                        })?;
+                                    crate::plugins::git::model::RepoRelativePath::new(relative)
+                                })
+                                .collect();
+                            let kind = match operation {
+                                crate::app::BrowserGitPathOperation::Stage => {
+                                    crate::plugins::git::local::MutationKind::Stage
+                                }
+                                crate::app::BrowserGitPathOperation::Unstage => {
+                                    crate::plugins::git::local::MutationKind::Unstage
+                                }
+                            };
+                            GitCliMutationBackend::new(repository.worktree_root).execute(
+                                &crate::plugins::git::local::MutationPlan {
+                                    kind,
+                                    targets: targets?,
+                                },
+                            )
+                        });
+                        let action = match operation {
+                            crate::app::BrowserGitPathOperation::Stage => "Stage",
+                            crate::app::BrowserGitPathOperation::Unstage => "Unstage",
+                        }
+                        .to_string();
                         Action::GitMutationCompleted { action, result }
                     }
                     Effect::SaveConfig { path, config } => {

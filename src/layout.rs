@@ -10,6 +10,7 @@ pub use navigation::{
 
 pub const MIN_WIDTH: u16 = 60;
 pub const MIN_HEIGHT: u16 = 15;
+pub const SINGLE_ROW_FUNCTION_WIDTH: u16 = 96;
 const MIN_COLUMN_WIDTH: u16 = 12;
 const MAX_COLUMNS: u16 = 6;
 
@@ -85,7 +86,12 @@ pub fn calculate(viewport: Viewport, settings: LayoutSettings) -> LayoutMetrics 
         };
     }
 
-    let list_height = viewport.height - 5;
+    let function_rows = if viewport.width >= SINGLE_ROW_FUNCTION_WIDTH {
+        1
+    } else {
+        2
+    };
+    let list_height = viewport.height - 2 - function_rows;
     let list = Rect::new(0, 1, viewport.width, list_height);
     let mut column_count = match settings.column_count {
         ColumnCountMode::Auto => {
@@ -115,10 +121,15 @@ pub fn calculate(viewport: Viewport, settings: LayoutSettings) -> LayoutMetrics 
         viewport: full,
         path_bar: Rect::new(0, 0, viewport.width, 1),
         list,
-        item_detail: Rect::new(0, viewport.height - 4, viewport.width, 1),
-        directory_summary: Rect::new(0, viewport.height - 3, viewport.width, 1),
-        message_bar: Rect::new(0, viewport.height - 2, viewport.width, 1),
-        function_bar: Rect::new(0, viewport.height - 1, viewport.width, 1),
+        item_detail: Rect::new(0, viewport.height - function_rows - 1, viewport.width, 1),
+        directory_summary: Rect::default(),
+        message_bar: Rect::default(),
+        function_bar: Rect::new(
+            0,
+            viewport.height - function_rows,
+            viewport.width,
+            function_rows,
+        ),
         columns,
         rows_per_column,
         page_capacity,
@@ -398,14 +409,23 @@ mod tests {
             let result = metrics(width, height);
             assert!(!result.too_small);
             assert_eq!(result.viewport, Rect::new(0, 0, width, height));
-            assert_eq!(result.list.height, height - 5);
-            assert_eq!(result.rows_per_column, usize::from(height - 5));
+            let function_rows = if width >= SINGLE_ROW_FUNCTION_WIDTH {
+                1
+            } else {
+                2
+            };
+            assert_eq!(result.list.height, height - 2 - function_rows);
+            assert_eq!(
+                result.rows_per_column,
+                usize::from(height - 2 - function_rows)
+            );
             assert_eq!(
                 result.page_capacity,
                 result.rows_per_column * result.columns.len()
             );
             assert_eq!(result.path_bar.y, 0);
-            assert_eq!(result.function_bar.y, height - 1);
+            assert_eq!(result.function_bar.y, height - function_rows);
+            assert_eq!(result.function_bar.height, function_rows);
         }
     }
 

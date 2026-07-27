@@ -10,6 +10,7 @@ pub enum MutationKind {
     Stage,
     Unstage,
     Commit { message: String },
+    Amend,
     Stash { message: String },
     Discard,
 }
@@ -152,6 +153,15 @@ impl GitMutationBackend for GitCliMutationBackend {
                 self.ensure_commit_ready()?;
                 self.run(&["commit", "-m", message])
             }
+            MutationKind::Amend => {
+                let name = self.output(&["config", "--get", "user.name"])?;
+                let email = self.output(&["config", "--get", "user.email"])?;
+                if name.is_empty() || email.is_empty() {
+                    return Err("Git author name and email are required.".into());
+                }
+                self.output(&["rev-parse", "--verify", "HEAD"])?;
+                self.run(&["commit", "--amend", "--no-edit"])
+            }
             MutationKind::Stash { message } => self.run(&["stash", "push", "-u", "-m", message]),
             MutationKind::Discard => {
                 let mut arguments =
@@ -212,7 +222,10 @@ pub fn preflight_stage(
             status,
             GitStatus::Modified | GitStatus::Added | GitStatus::Deleted | GitStatus::Renamed
         ),
-        MutationKind::Commit { .. } | MutationKind::Stash { .. } | MutationKind::Discard => false,
+        MutationKind::Commit { .. }
+        | MutationKind::Amend
+        | MutationKind::Stash { .. }
+        | MutationKind::Discard => false,
     };
     if rows.is_empty() || rows.iter().any(|(_, status)| !allowed(*status)) {
         return Err("Selected files cannot be used by this Git operation.".into());

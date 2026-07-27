@@ -4,11 +4,32 @@ use std::{
 };
 
 use super::model::{
-    DiffTarget, GitReadBackend, GitStatus, GitStatusRow, RepoRelativePath, RepositoryIdentity,
+    DiffTarget, DirectoryStatus, GitReadBackend, GitStatus, GitStatusRow, RepoRelativePath,
+    RepositoryIdentity,
 };
 
 #[derive(Default)]
 pub struct GitCliReadBackend;
+
+fn status_from_code(code: &str) -> GitStatus {
+    if code == "??" {
+        GitStatus::Untracked
+    } else if code == "!!" {
+        GitStatus::Ignored
+    } else if matches!(code, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU") {
+        GitStatus::Conflicted
+    } else if code.contains('A') {
+        GitStatus::Added
+    } else if code.contains('D') {
+        GitStatus::Deleted
+    } else if code.contains('R') {
+        GitStatus::Renamed
+    } else if code.contains('C') {
+        GitStatus::Copied
+    } else {
+        GitStatus::Modified
+    }
+}
 
 impl GitCliReadBackend {
     fn run(directory: &Path, arguments: &[&str]) -> Result<String, String> {
@@ -25,6 +46,30 @@ impl GitCliReadBackend {
         } else {
             Err("Git read operation failed.".into())
         }
+    }
+
+    pub fn directory_status(directory: &Path) -> Result<Option<DirectoryStatus>, String> {
+        let backend = Self;
+        let Some(repository) = backend.discover(directory)? else {
+            return Ok(None);
+        };
+        let rows = backend.status(&repository)?;
+        let canonical_directory = directory
+            .canonicalize()
+            .unwrap_or_else(|_| directory.to_path_buf());
+        let canonical_root = repository
+            .worktree_root
+            .canonicalize()
+            .unwrap_or_else(|_| repository.worktree_root.clone());
+        let directory_prefix = canonical_directory
+            .strip_prefix(canonical_root)
+            .unwrap_or(Path::new(""))
+            .to_path_buf();
+        Ok(Some(DirectoryStatus {
+            worktree_root: repository.worktree_root,
+            directory_prefix,
+            rows,
+        }))
     }
 }
 
@@ -47,31 +92,23 @@ impl GitReadBackend for GitCliReadBackend {
         }))
     }
     fn status(&self, repository: &RepositoryIdentity) -> Result<Vec<GitStatusRow>, String> {
-        let output = Self::run(&repository.worktree_root, &["status", "--porcelain=v1"])?;
+        let output = Self::run(
+            &repository.worktree_root,
+            &["status", "--porcelain=v1", "-z"],
+        )?;
         let mut rows = Vec::new();
-        for line in output.lines() {
-            if line.len() < 4 {
+        let mut fields = output.split('\0').filter(|field| !field.is_empty());
+        while let Some(field) = fields.next() {
+            if field.len() < 4 {
                 continue;
             }
-            let code = &line[..2];
-            let status = if code == "??" {
-                GitStatus::Untracked
-            } else if code == "!!" {
-                GitStatus::Ignored
-            } else if matches!(code, "UU" | "AA" | "DD") {
-                GitStatus::Conflicted
-            } else if code.contains('A') {
-                GitStatus::Added
-            } else if code.contains('D') {
-                GitStatus::Deleted
-            } else if code.contains('R') {
-                GitStatus::Renamed
-            } else if code.contains('C') {
-                GitStatus::Copied
-            } else {
-                GitStatus::Modified
-            };
-            if let Ok(path) = RepoRelativePath::new(&line[3..]) {
+            let code = &field[..2];
+            let status = status_from_code(code);
+            let path = &field[3..];
+            if matches!(status, GitStatus::Renamed | GitStatus::Copied) {
+                let _old_path = fields.next();
+            }
+            if let Ok(path) = RepoRelativePath::new(path) {
                 rows.push(GitStatusRow {
                     path,
                     status,
@@ -99,5 +136,17 @@ impl GitReadBackend for GitCliReadBackend {
             .ok_or_else(|| "Invalid repository path.".to_string())?;
         args.extend(["--", path]);
         Self::run(&repository.worktree_root, &args)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_unmerged_porcelain_code_has_conflict_emphasis() {
+        for code in ["DD", "AU", "UD", "UA", "DU", "AA", "UU"] {
+            assert_eq!(status_from_code(code), GitStatus::Conflicted);
+        }
     }
 }

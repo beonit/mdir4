@@ -81,7 +81,7 @@ fn empty_non_root_listing_contains_only_parent_but_is_empty() {
 }
 
 #[test]
-fn started_and_directory_results_have_distinct_messages() {
+fn loading_message_clears_after_a_successful_empty_directory_load() {
     let start_path = PathBuf::from(r"C:\WORK\EMPTY");
     let mut state = AppState::new(start_path.clone(), viewport());
 
@@ -103,7 +103,7 @@ fn started_and_directory_results_have_distinct_messages() {
             result: Ok(listing),
         },
     );
-    assert_eq!(state.message.as_deref(), Some("Empty directory"));
+    assert!(state.message.is_none());
     assert_eq!(state.entries.len(), 1);
 
     let denied_path = PathBuf::from(r"C:\WORK\SECRET");
@@ -148,6 +148,34 @@ fn real_filesystem_loads_and_sorts_a_temporary_directory() {
         .unwrap();
     assert_eq!(file.kind, EntryKind::File);
     assert_eq!(file.size, 3);
+}
+
+#[cfg(unix)]
+#[test]
+fn real_filesystem_preserves_executable_and_symlink_metadata_for_classification() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let root = tempdir().unwrap();
+    let script = root.path().join("build-script");
+    fs::write(&script, b"#!/bin/sh\n").unwrap();
+    let mut permissions = fs::metadata(&script).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script, permissions).unwrap();
+    symlink(&script, root.path().join("build-link")).unwrap();
+
+    let listing = load_directory(&RealFileSystem, root.path()).unwrap();
+    let executable = listing
+        .entries
+        .iter()
+        .find(|entry| entry.display_name() == "build-script")
+        .unwrap();
+    let link = listing
+        .entries
+        .iter()
+        .find(|entry| entry.display_name() == "build-link")
+        .unwrap();
+    assert!(executable.attributes.executable);
+    assert_eq!(link.kind, EntryKind::Other);
 }
 
 #[test]

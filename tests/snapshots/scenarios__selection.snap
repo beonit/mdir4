@@ -3,9 +3,9 @@ source: tests/scenarios.rs
 expression: snapshot
 ---
 /work                                                                           
-..                                                              <UP> ----- --:--
-a.txt                                                            11B ----- --:--
-b.txt                                                            22B ----- --:--
+  ..                                 <UP> ----- --:--                           
+  a.txt                               11B ----- --:--                           
+  b.txt                               22B ----- --:--                           
                                                                                 
                                                                                 
                                                                                 
@@ -23,7 +23,7 @@ b.txt                                                            22B ----- --:--
                                                                                 
                                                                                 
                                                                                 
-a.txt   FILE   11B   ----                                                       
-Files 2  Dirs 0  Selected 1 / 11B  Free 12.0K  Items 2                          
-Enter Open  Backspace Parent  Space Mark  R Refresh  Ctrl+Q Quit                
-1Help 2Ren 3View 4Edit 5Copy 6Move 7Dir 8Del 9--- 10MCD 11QCD 12Menu
+                                                                                
+a.txt  11B FILE                                  │ F 2  D 0  S 1/11B  12.0K Free
+F1 Help       F2 Ren        F3 View      F4 Edit      F5 Copy      F6 Move      
+F7 Dir        F8 Del        F9 ---       F10 MCD      F11 QCD      F12 Menu

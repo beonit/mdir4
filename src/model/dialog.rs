@@ -106,6 +106,7 @@ pub struct ConfirmDialog {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfirmOperation {
+    GitAmend,
     Delete {
         targets: Vec<PathBuf>,
         permanent: bool,

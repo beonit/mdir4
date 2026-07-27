@@ -2,7 +2,10 @@ use crate::{
     app::command_registry::CommandRegistry,
     app::{AppState, Screen},
     fs::{EntryKind, FileEntry},
-    layout::{LayoutMetrics, text::pad_or_truncate},
+    layout::{
+        LayoutMetrics,
+        text::{cell_width, pad_or_truncate, truncate_end},
+    },
     theme::schema::ThemeRole,
 };
 use ratatui::{
@@ -15,6 +18,8 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 
 mod palette;
+
+const FILE_STATUS_GUTTER_CELLS: usize = 2;
 
 pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
     palette::set_theme(&state.theme);
@@ -115,6 +120,7 @@ fn render_remote(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetric
                 kind,
                 entry.size.map(human_size).unwrap_or_else(|| "--".into())
             );
+            let text = pad_or_truncate(&text, content_width as usize);
             let role = if index == view.selected {
                 ThemeRole::EntryCursor
             } else if entry.kind == crate::remote::backend::RemoteEntryKind::Directory {
@@ -140,40 +146,38 @@ fn render_remote(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetric
     let detail = view
         .entries
         .get(view.selected)
-        .map(|entry| format!("{}   Remote read-only", entry.name.display()))
+        .map(|entry| format!("{}  Remote", entry.name.display()))
         .unwrap_or_else(|| "(no items)".to_string());
+    let status = state.message.clone().unwrap_or_else(|| {
+        format!(
+            "{detail} │ {}  {} Items",
+            view.alias.as_str(),
+            view.entries.len()
+        )
+    });
     render_status_line(
         frame,
-        detail,
+        status,
         metrics.item_detail,
         palette::role(ThemeRole::StatusBar),
     );
-    render_status_line(
+    render_function_bar(
         frame,
-        format!(
-            "Remote {}  Items {}",
-            view.alias.as_str(),
-            view.entries.len()
-        ),
-        metrics.directory_summary,
-        palette::role(ThemeRole::StatusBar),
-    );
-    render_status_line(
-        frame,
-        state
-            .message
-            .as_deref()
-            .unwrap_or("Enter Open  Backspace Parent  R Refresh  Esc Locations"),
-        metrics.message_bar,
-        palette::role(ThemeRole::MessageBar),
-    );
-    frame.render_widget(
-        Paragraph::new(pad_or_truncate(
-            "1Help 2--- 3--- 4Disabled 5Disabled 6Disabled 7--- 8--- 9--- 10--- 11--- 12Locations",
-            metrics.function_bar.width as usize,
-        ))
-        .style(palette::role(ThemeRole::FunctionBar)),
         metrics.function_bar,
+        &[
+            (1, "Help"),
+            (2, "---"),
+            (3, "---"),
+            (4, "Disabled"),
+            (5, "Disabled"),
+            (6, "Disabled"),
+            (7, "---"),
+            (8, "---"),
+            (9, "---"),
+            (10, "---"),
+            (11, "---"),
+            (12, "Locations"),
+        ],
     );
 }
 
@@ -499,7 +503,13 @@ fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         viewport.x,
         viewport.y.saturating_add(1),
         viewport.width,
-        viewport.height.saturating_sub(2),
+        viewport.height.saturating_sub(3),
+    );
+    let path_bar = Rect::new(
+        viewport.x,
+        viewport.y.saturating_add(viewport.height.saturating_sub(2)),
+        viewport.width,
+        1,
     );
     let footer = Rect::new(
         viewport.x,
@@ -507,71 +517,175 @@ fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         viewport.width,
         1,
     );
-    let all_rows = tree.visible_rows();
-    let (start, rows) = tree.visible_window(body.height as usize);
-    let end = start + rows.len();
-    let title = format!(
-        "Mdir4 Change Directory  [{}-{}/{}]",
-        if all_rows.is_empty() { 0 } else { start + 1 },
-        end,
-        all_rows.len()
-    );
     frame.render_widget(
-        Paragraph::new(title).style(palette::role(ThemeRole::McdBackground)),
+        Paragraph::new("Mdir4 Change Directory")
+            .alignment(Alignment::Center)
+            .style(palette::role(ThemeRole::McdBackground)),
         header,
     );
-    let mut lines = Vec::with_capacity(rows.len());
-    for (index, row) in rows.iter().enumerate() {
-        let node = tree.node(row.id).unwrap();
-        let prefix = row
-            .connector_continues
-            .iter()
-            .take(row.connector_continues.len().saturating_sub(1))
-            .map(|continues| if *continues { "│  " } else { "   " })
-            .collect::<String>();
-        let branch = if node.depth == 0 {
-            ""
-        } else if row.connector_continues.last().copied().unwrap_or(false) {
-            "├─ "
+    if let Some(selected) = tree.selected_node() {
+        let mut path = Vec::new();
+        let mut current = Some(selected.id);
+        while let Some(id) = current {
+            path.push(id);
+            current = tree.node(id).and_then(|node| node.parent);
+        }
+        path.reverse();
+
+        let mut columns: Vec<(
+            Vec<crate::mcd::tree::NodeId>,
+            Option<crate::mcd::tree::NodeId>,
+        )> = Vec::new();
+        for (depth, active) in path.iter().copied().enumerate() {
+            let siblings = if depth == 0 {
+                vec![active]
+            } else {
+                tree.node(path[depth - 1])
+                    .map(|parent| parent.children.clone())
+                    .unwrap_or_else(|| vec![active])
+            };
+            columns.push((siblings, Some(active)));
+        }
+        if selected.expanded && !selected.children.is_empty() {
+            columns.push((selected.children.clone(), None));
+        }
+
+        let column_width = if columns.len().saturating_mul(16) <= body.width as usize {
+            (body.width as usize / columns.len().max(1)).clamp(16, 28)
         } else {
-            "└─ "
+            22
         };
-        let marker = match node.state {
-            crate::mcd::tree::LoadState::Loading => " …",
-            crate::mcd::tree::LoadState::Error(_) => " !",
-            _ => "",
-        };
-        let name = node
+        let total_width = columns.len() * column_width;
+        let horizontal_offset = total_width
+            .saturating_sub(body.width as usize)
+            .div_ceil(column_width)
+            * column_width;
+        let mut parent_y = 0usize;
+        for (depth, (nodes, active)) in columns.iter().enumerate() {
+            let logical_x = depth * column_width;
+            if logical_x + column_width <= horizontal_offset {
+                continue;
+            }
+            let x = body.x as usize + logical_x.saturating_sub(horizontal_offset);
+            if x >= body.right() as usize {
+                continue;
+            }
+            let active_index = active
+                .and_then(|active| nodes.iter().position(|id| *id == active))
+                .unwrap_or(0);
+            let height = body.height as usize;
+            let (start, top) = if nodes.len() <= height {
+                let max_top = height.saturating_sub(nodes.len());
+                (0, parent_y.saturating_sub(active_index).min(max_top))
+            } else {
+                (
+                    active_index
+                        .saturating_sub(parent_y)
+                        .min(nodes.len().saturating_sub(height)),
+                    0,
+                )
+            };
+            let active_y = top + active_index.saturating_sub(start);
+            for (visible_index, id) in nodes.iter().skip(start).take(height).enumerate() {
+                let node_index = start + visible_index;
+                let Some(node) = tree.node(*id) else { continue };
+                let y = body.y.saturating_add((top + visible_index) as u16);
+                let available = (body.right() as usize - x).min(column_width);
+                let branch = if depth == 0 {
+                    ""
+                } else if nodes.len() == 1 {
+                    "──"
+                } else if node_index + 1 == nodes.len() {
+                    "└─"
+                } else {
+                    "├─"
+                };
+                let marker = match node.state {
+                    crate::mcd::tree::LoadState::Loading => "…",
+                    crate::mcd::tree::LoadState::Error(_) => "!",
+                    _ => "",
+                };
+                let name = node
+                    .path
+                    .file_name()
+                    .unwrap_or(node.path.as_os_str())
+                    .to_string_lossy();
+                let continues = active == &Some(*id) && depth + 1 < columns.len();
+                let branch_width = crate::layout::text::cell_width(branch);
+                let marker_width = crate::layout::text::cell_width(marker);
+                let name_width = available.saturating_sub(branch_width + marker_width);
+                let name = crate::layout::text::truncate_end(&name, name_width, "…");
+                let used = branch_width + crate::layout::text::cell_width(&name) + marker_width;
+                let tail = if continues {
+                    "─".repeat(available.saturating_sub(used))
+                } else {
+                    " ".repeat(available.saturating_sub(used))
+                };
+                let name_style = if *id == selected.id {
+                    palette::role(ThemeRole::EntryCursor)
+                } else {
+                    palette::role(ThemeRole::McdBackground)
+                };
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(branch, palette::role(ThemeRole::McdBackground)),
+                        Span::styled(name, name_style),
+                        Span::styled(marker, palette::role(ThemeRole::McdBackground)),
+                        Span::styled(tail, palette::role(ThemeRole::McdBackground)),
+                    ]))
+                    .style(palette::role(ThemeRole::McdBackground)),
+                    Rect::new(x as u16, y, available as u16, 1),
+                );
+            }
+            parent_y = active_y.min(height.saturating_sub(1));
+        }
+
+        let selected_path = selected.path.display().to_string();
+        let selected_name = selected
             .path
             .file_name()
-            .unwrap_or(node.path.as_os_str())
+            .unwrap_or(selected.path.as_os_str())
             .to_string_lossy();
-        let line = format!(
-            "{}{}{}{}{}",
-            if start + index == tree.selected {
-                "> "
-            } else {
-                "  "
-            },
-            prefix,
-            branch,
-            name,
-            marker
+        let suffix = format!(" [{selected_name}]");
+        let path_width = path_bar.width as usize;
+        let left_width = path_width.saturating_sub(crate::layout::text::cell_width(&suffix));
+        frame.render_widget(
+            Paragraph::new(format!(
+                "{}{}",
+                pad_or_truncate(&selected_path, left_width),
+                suffix
+            ))
+            .style(palette::role(ThemeRole::StatusBar)),
+            path_bar,
         );
-        lines.push(Line::raw(line));
     }
+    render_mcd_function_bar(frame, footer);
+}
+
+fn render_mcd_function_bar(frame: &mut Frame<'_>, area: Rect) {
+    let left = [(1, "Help"), (2, "Rescan"), (3, "Drives")];
+    let mut spans = Vec::new();
+    let mut used = 0usize;
+    for (key, label) in left {
+        let key = format!("F{key}");
+        let label = format!(" {label}  ");
+        used += crate::layout::text::cell_width(&key) + crate::layout::text::cell_width(&label);
+        spans.push(Span::styled(key, palette::role(ThemeRole::FunctionKey)));
+        spans.push(Span::styled(label, palette::role(ThemeRole::FunctionLabel)));
+    }
+    let right = "Enter Open  Esc Cancel";
+    let gap = area
+        .width
+        .saturating_sub((used + crate::layout::text::cell_width(right)) as u16)
+        as usize;
+    spans.push(Span::styled(
+        " ".repeat(gap),
+        palette::role(ThemeRole::FunctionLabel),
+    ));
+    spans.push(Span::styled(right, palette::role(ThemeRole::FunctionLabel)));
     frame.render_widget(
-        Paragraph::new(lines).style(palette::role(ThemeRole::McdBackground)),
-        body,
-    );
-    let above = if start > 0 { "▲ " } else { "  " };
-    let below = if end < all_rows.len() { "▼ " } else { "  " };
-    frame.render_widget(
-        Paragraph::new(format!(
-            "{above}{below}PgUp/PgDn  F2 Rescan  F3 Drives  Enter Open  Esc Cancel"
-        ))
-        .style(palette::role(ThemeRole::McdBackground)),
-        footer,
+        Paragraph::new(Line::from(spans)).style(palette::role(ThemeRole::FunctionBar)),
+        area,
     );
 }
 
@@ -736,7 +850,7 @@ fn render_document_viewer(
 ) {
     use crate::model::viewer::ViewerState;
     let body_height = area.height.saturating_sub(3) as usize;
-    let mut lines: Vec<Line<'_>> = match viewer {
+    let lines: Vec<Line<'_>> = match viewer {
         ViewerState::Loading { .. } => vec![Line::raw("Loading...")],
         ViewerState::Binary => vec![Line::raw("Binary file preview is not available.")],
         ViewerState::TooLarge => vec![Line::raw("File is too large to view (maximum 32 MiB).")],
@@ -750,8 +864,40 @@ fn render_document_viewer(
             })
             .collect(),
     };
-    lines.push(Line::raw(help));
-    frame.render_widget(Paragraph::new(lines).block(dialog_block(title)), area);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(palette::role(ThemeRole::ViewerBorder))
+                .style(palette::role(ThemeRole::Viewer)),
+        ),
+        area,
+    );
+    let status = match viewer {
+        ViewerState::Ready(document) => format!(
+            " Line {}/{}  Col 1    {help}",
+            document
+                .top_line
+                .saturating_add(1)
+                .min(document.lines.len()),
+            document.lines.len()
+        ),
+        _ => format!(" {help}"),
+    };
+    frame.render_widget(
+        Paragraph::new(pad_or_truncate(
+            &status,
+            area.width.saturating_sub(2) as usize,
+        ))
+        .style(palette::role(ThemeRole::StatusBar)),
+        Rect::new(
+            area.x.saturating_add(1),
+            area.bottom().saturating_sub(2),
+            area.width.saturating_sub(2),
+            1,
+        ),
+    );
 }
 
 fn render_editor(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
@@ -840,21 +986,15 @@ fn render_main(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics)
                     lines.push(Line::raw(""));
                     continue;
                 };
-                let text = format_entry_with_decoration(
+                lines.push(format_entry_line(
                     entry,
                     content_width as usize,
                     state
                         .plugin_decorations
                         .get(&entry.path.display().to_string()),
-                );
-                lines.push(Line::from(Span::styled(
-                    text,
-                    palette::entry(
-                        entry,
-                        index == state.selected,
-                        state.marked.contains(&entry.path),
-                    ),
-                )));
+                    index == state.selected,
+                    state.marked.contains(&entry.path),
+                ));
             }
             frame.render_widget(
                 Paragraph::new(Text::from(lines)).style(palette::role(ThemeRole::MainBackground)),
@@ -881,20 +1021,12 @@ fn render_main(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics)
                 EntryKind::Other => "OTHER",
             };
             format!(
-                "{}   {}   {}   {}",
+                "{}  {} {kind}",
                 entry.display_name(),
-                kind,
-                human_size(entry.size),
-                format_attributes(entry)
+                human_size(entry.size)
             )
         })
         .unwrap_or_else(|| "(no items)".to_string());
-    render_status_line(
-        frame,
-        detail,
-        metrics.item_detail,
-        palette::role(ThemeRole::StatusBar),
-    );
 
     let (files, directories) = state.file_and_directory_count();
     let (marked, marked_bytes) = state.marked_summary();
@@ -902,72 +1034,135 @@ fn render_main(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics)
         .free_space
         .map(human_size)
         .unwrap_or_else(|| "--".into());
-    let summary = format!(
-        "Files {files}  Dirs {directories}  Selected {marked} / {}  Free {free}  Items {}",
-        human_size(marked_bytes),
-        state.entries.len().saturating_sub(usize::from(
-            state
-                .entries
-                .first()
-                .is_some_and(|entry| entry.kind == EntryKind::Parent)
-        ))
-    );
+    let marked_size = human_size(marked_bytes);
+    let summary = if metrics.item_detail.width >= 100 {
+        format!("{files} File  {directories} Dir  Sel {marked}/{marked_size}  Free {free}")
+    } else {
+        format!("F {files}  D {directories}  S {marked}/{marked_size}  {free} Free")
+    };
     let plugin_status = state
         .plugin_status
         .iter()
         .flat_map(|text| text.spans.iter().map(|span| span.text.as_str()))
         .collect::<String>();
+    let width = metrics.item_detail.width as usize;
+    let right = format!("{summary}{plugin_status}");
+    let separator = " │ ";
+    let detail_width = width
+        .saturating_sub(crate::layout::text::cell_width(&right))
+        .saturating_sub(crate::layout::text::cell_width(separator));
+    let status = state.message.clone().unwrap_or_else(|| {
+        format!(
+            "{}{}{}",
+            pad_or_truncate(&detail, detail_width),
+            separator,
+            right
+        )
+    });
     render_status_line(
         frame,
-        format!("{summary}{plugin_status}"),
-        metrics.directory_summary,
+        status,
+        metrics.item_detail,
         palette::role(ThemeRole::StatusBar),
     );
 
-    let message = state
-        .message
-        .as_deref()
-        .unwrap_or("Enter Open  Backspace Parent  Space Mark  R Refresh  Ctrl+Q Quit");
-    render_status_line(
-        frame,
-        message,
-        metrics.message_bar,
-        palette::role(ThemeRole::MessageBar),
-    );
+    let function_keys = state
+        .registry
+        .function_commands()
+        .filter_map(|command| command.function_key.map(|key| (key, command.label)))
+        .collect::<Vec<_>>();
+    render_function_bar(frame, metrics.function_bar, &function_keys);
+}
 
+fn render_function_bar(frame: &mut Frame<'_>, area: Rect, commands: &[(u8, &str)]) {
+    let row_count = area.height.max(1) as usize;
+    let per_row = commands.len().div_ceil(row_count);
+    let mut rows = Vec::with_capacity(row_count);
+    for row in 0..row_count {
+        let start = (row * per_row).min(commands.len());
+        let commands = &commands[start..((row + 1) * per_row).min(commands.len())];
+        let mut spans = Vec::new();
+        for (index, (key, label)) in commands.iter().enumerate() {
+            let slot =
+                area.width as usize / per_row + usize::from(index < area.width as usize % per_row);
+            let key_text = format!("F{key}");
+            let key_width = crate::layout::text::cell_width(&key_text).min(slot);
+            spans.push(Span::styled(
+                pad_or_truncate(&key_text, key_width),
+                palette::role(ThemeRole::FunctionKey),
+            ));
+            spans.push(Span::styled(
+                pad_or_truncate(&format!(" {label}"), slot.saturating_sub(key_width)),
+                palette::role(ThemeRole::FunctionLabel),
+            ));
+        }
+        rows.push(Line::from(spans));
+    }
     frame.render_widget(
-        Paragraph::new(pad_or_truncate(
-            &format!(
-                "{}{}",
-                state.registry.function_bar_text(),
-                plugin_command_footer(&state.plugin_commands)
-            ),
-            metrics.function_bar.width as usize,
-        ))
-        .style(palette::role(ThemeRole::FunctionBar)),
-        metrics.function_bar,
+        Paragraph::new(rows).style(palette::role(ThemeRole::FunctionBar)),
+        area,
     );
 }
 
-fn format_entry_with_decoration(
+fn format_entry_line(
     entry: &FileEntry,
     width: usize,
     decoration: Option<&crate::plugins::api::FileDecoration>,
-) -> String {
-    let prefix = decoration.map_or_else(String::new, |decoration| {
-        decoration
-            .text
-            .spans
-            .iter()
-            .map(|span| span.text.as_str())
-            .collect()
-    });
-    let reserved = decoration.map_or(0, |decoration| usize::from(decoration.reserved_cells));
-    format!(
-        "{}{}",
-        pad_or_truncate(&prefix, reserved.min(width)),
-        format_entry(entry, width.saturating_sub(reserved))
+    cursor: bool,
+    marked: bool,
+) -> Line<'static> {
+    let entry_style = palette::entry(entry, cursor, marked);
+    let reserved = decoration
+        .map_or(FILE_STATUS_GUTTER_CELLS, |decoration| {
+            usize::from(decoration.reserved_cells).max(FILE_STATUS_GUTTER_CELLS)
+        })
+        .min(width);
+    decorated_line(
+        format_entry(entry, width.saturating_sub(reserved)),
+        width,
+        decoration,
+        entry_style,
+        cursor,
     )
+}
+
+fn decorated_line(
+    content: String,
+    width: usize,
+    decoration: Option<&crate::plugins::api::FileDecoration>,
+    entry_style: Style,
+    selected: bool,
+) -> Line<'static> {
+    let reserved = decoration
+        .map_or(FILE_STATUS_GUTTER_CELLS, |value| {
+            usize::from(value.reserved_cells).max(FILE_STATUS_GUTTER_CELLS)
+        })
+        .min(width);
+    let mut spans = Vec::new();
+    let mut remaining = reserved;
+    if let Some(decoration) = decoration {
+        for decoration_span in &decoration.text.spans {
+            if remaining == 0 {
+                break;
+            }
+            let text = truncate_end(&decoration_span.text, remaining, "");
+            remaining = remaining.saturating_sub(cell_width(&text));
+            let style = if selected {
+                entry_style
+            } else {
+                palette::decoration(decoration_span.role.as_ref(), entry_style)
+            };
+            spans.push(Span::styled(text, style));
+        }
+    }
+    if remaining > 0 {
+        spans.push(Span::styled(" ".repeat(remaining), entry_style));
+    }
+    spans.push(Span::styled(
+        pad_or_truncate(&content, width.saturating_sub(reserved)),
+        entry_style,
+    ));
+    Line::from(spans)
 }
 
 fn render_long_view(
@@ -997,7 +1192,7 @@ fn render_long_view(
     let name_width = width.saturating_sub(fixed).max(8);
     let mut lines = vec![Line::raw(format!(
         "{} {:>9}{}{}{}",
-        pad_or_truncate("Name", name_width),
+        pad_or_truncate("  Name", name_width),
         "Size",
         if show_date { "   Date" } else { "" },
         if show_time { "   Time" } else { "" },
@@ -1011,9 +1206,17 @@ fn render_long_view(
         .enumerate()
     {
         let modified = entry.local_modified;
+        let decoration = state
+            .plugin_decorations
+            .get(&entry.path.display().to_string());
+        let reserved = decoration
+            .map_or(FILE_STATUS_GUTTER_CELLS, |value| {
+                usize::from(value.reserved_cells).max(FILE_STATUS_GUTTER_CELLS)
+            })
+            .min(width);
         let text = format!(
             "{} {:>9}{}{}{}",
-            pad_or_truncate(&entry.display_name(), name_width),
+            pad_or_truncate(&entry.display_name(), name_width.saturating_sub(reserved)),
             match entry.kind {
                 EntryKind::Directory => "<DIR>".to_string(),
                 EntryKind::Parent => "<UP>".to_string(),
@@ -1040,14 +1243,14 @@ fn render_long_view(
             },
         );
         let index = page_start + offset;
-        lines.push(Line::from(Span::styled(
+        let selected = index == state.selected;
+        lines.push(decorated_line(
             text,
-            palette::entry(
-                entry,
-                index == state.selected,
-                state.marked.contains(&entry.path),
-            ),
-        )));
+            width,
+            decoration,
+            palette::entry(entry, selected, state.marked.contains(&entry.path)),
+            selected,
+        ));
     }
     frame.render_widget(
         Paragraph::new(lines).style(palette::role(ThemeRole::MainBackground)),
@@ -1101,18 +1304,6 @@ fn render_help(
     );
 }
 
-fn plugin_command_footer(commands: &[crate::app::command_registry::PluginCommandHint]) -> String {
-    commands
-        .iter()
-        .filter_map(|command| match command.availability {
-            crate::plugins::api::CommandAvailability::Enabled => command
-                .key
-                .map(|key| format!("  {}{}", key.display(), command.label)),
-            crate::plugins::api::CommandAvailability::Disabled { .. } => None,
-        })
-        .collect()
-}
-
 fn render_quit_confirmation(frame: &mut Frame<'_>, viewport: Rect) {
     let area = centered_rect(38, 5, viewport);
     frame.render_widget(Clear, area);
@@ -1153,16 +1344,18 @@ fn format_entry(entry: &FileEntry, width: usize) -> String {
     let wide = width >= 40;
     let metadata_width = 8;
     let suffix_width = if wide { 12 } else { 0 };
-    let name_width = width.saturating_sub(metadata_width + suffix_width + 1);
+    let name_width = width
+        .saturating_sub(metadata_width + suffix_width + 1)
+        .min(30);
     let compact = format!(
         "{} {:>metadata_width$}",
         pad_or_truncate(&name, name_width),
         metadata
     );
     if wide {
-        format!("{compact} {}", format_modified(entry))
+        pad_or_truncate(&format!("{compact} {}", format_modified(entry)), width)
     } else {
-        compact
+        pad_or_truncate(&compact, width)
     }
 }
 
@@ -1304,32 +1497,6 @@ mod tests {
     }
 
     #[test]
-    fn plugin_command_footer_excludes_disabled_hints() {
-        use crate::{
-            app::command_registry::PluginCommandHint,
-            input::key::{KeyChord, KeyCode},
-            plugins::api::CommandAvailability,
-        };
-        let commands = vec![
-            PluginCommandHint {
-                id: "plugin.fake.ok".into(),
-                label: "Fake".into(),
-                key: Some(KeyChord::plain(KeyCode::Function(10))),
-                availability: CommandAvailability::Enabled,
-            },
-            PluginCommandHint {
-                id: "plugin.fake.no".into(),
-                label: "Hidden".into(),
-                key: Some(KeyChord::plain(KeyCode::Function(11))),
-                availability: CommandAvailability::Disabled {
-                    reason: "Conflict".into(),
-                },
-            },
-        ];
-        assert_eq!(plugin_command_footer(&commands), "  F10Fake");
-    }
-
-    #[test]
     fn decoration_reserves_its_prefix_cells_before_formatting_the_filename() {
         let entry = entry("very-long-file-name.txt", EntryKind::File, 1);
         let decoration = crate::plugins::api::FileDecoration {
@@ -1343,9 +1510,55 @@ mod tests {
             reserved_cells: 2,
             priority: 1,
         };
-        let rendered = format_entry_with_decoration(&entry, 12, Some(&decoration));
-        assert_eq!(&rendered[..2], "!!");
-        assert_eq!(crate::layout::text::cell_width(&rendered), 12);
+        let rendered = format_entry_line(&entry, 12, Some(&decoration), false, false);
+        let text: String = rendered
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(&text[..2], "!!");
+        assert_eq!(crate::layout::text::cell_width(&text), 12);
+    }
+
+    #[test]
+    fn file_rows_always_reserve_the_status_gutter_before_git_finishes_loading() {
+        let entry = entry("main.rs", EntryKind::File, 1);
+        let rendered = format_entry_line(&entry, 16, None, false, false);
+        let text: String = rendered
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(text.starts_with("  main.rs"));
+        assert_eq!(crate::layout::text::cell_width(&text), 16);
+    }
+
+    #[test]
+    fn git_marker_and_file_type_keep_independent_colors_until_selected() {
+        palette::set_theme(&crate::theme::catalog::Theme::classic());
+        let entry = entry("main.rs", EntryKind::File, 1);
+        let decoration = crate::plugins::git::decoration::browser_decoration_for_entry(
+            entry.path.display().to_string(),
+            crate::plugins::git::model::GitStatus::Modified,
+        );
+
+        let normal = format_entry_line(&entry, 16, Some(&decoration), false, false);
+        assert_eq!(
+            normal.spans[0].style.fg,
+            Some(ratatui::style::Color::Yellow)
+        );
+        assert_eq!(
+            normal.spans.last().unwrap().style.fg,
+            Some(ratatui::style::Color::LightBlue)
+        );
+
+        let selected = format_entry_line(&entry, 16, Some(&decoration), true, false);
+        assert!(
+            selected
+                .spans
+                .iter()
+                .all(|span| span.style.bg == Some(ratatui::style::Color::Cyan))
+        );
     }
 
     #[test]
@@ -1502,7 +1715,7 @@ mod tests {
 
     #[test]
     fn column_separator_uses_box_drawing_border_cells() {
-        let entries = (0..21)
+        let entries = (0..23)
             .map(|index| entry(&format!("{index}.txt"), EntryKind::File, 1))
             .collect();
         let state = state_with(entries, 80, 25);
@@ -1522,6 +1735,128 @@ mod tests {
         for y in metrics.list.y..metrics.list.y + metrics.list.height {
             assert_eq!(buffer[(separator_x, y)].symbol(), "│");
         }
+    }
+
+    #[test]
+    fn function_keys_are_keycaps_and_selection_fills_its_cell() {
+        use ratatui::style::Color;
+
+        let state = state_with(vec![entry("selected.txt", EntryKind::File, 1)], 80, 25);
+        let metrics = crate::layout::calculate_for_entries(
+            state.viewport,
+            state.layout_settings,
+            state.entries.len(),
+        );
+        let backend = TestBackend::new(80, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, &state, &metrics))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        assert_eq!(buffer[(0, metrics.function_bar.y)].symbol(), "F");
+        assert_eq!(buffer[(1, metrics.function_bar.y)].symbol(), "1");
+        assert_eq!(buffer[(0, metrics.function_bar.y)].bg, Color::Cyan);
+        assert_eq!(buffer[(2, metrics.function_bar.y)].bg, Color::Black);
+        assert_eq!(
+            buffer[(metrics.columns[0].right() - 1, metrics.list.y)].bg,
+            Color::Cyan
+        );
+    }
+
+    #[test]
+    fn wide_browser_uses_one_status_row_and_one_function_row() {
+        let state = state_with(vec![entry("selected.txt", EntryKind::File, 1)], 146, 30);
+        let metrics = crate::layout::calculate_for_entries(
+            state.viewport,
+            state.layout_settings,
+            state.entries.len(),
+        );
+        assert_eq!(metrics.function_bar.height, 1);
+        assert_eq!(metrics.item_detail.y + 1, metrics.function_bar.y);
+        let output = rendered(&state, 146, 30);
+        let lines = output.lines().collect::<Vec<_>>();
+        assert!(lines[metrics.item_detail.y as usize].contains("1 File"));
+        assert!(lines[metrics.item_detail.y as usize].contains("Free"));
+        assert!(lines[metrics.function_bar.y as usize].contains("F1 Help"));
+        assert!(lines[metrics.function_bar.y as usize].contains("F12 Menu"));
+    }
+
+    #[test]
+    fn mcd_draws_a_connected_hierarchy_map_and_highlights_only_the_name() {
+        use ratatui::style::Color;
+
+        let mut state = state_with(Vec::new(), 120, 30);
+        let mut tree = crate::mcd::tree::DirectoryTree::default();
+        let root = tree.add_root(PathBuf::from("/"));
+        tree.set_children(
+            root,
+            ["/Applications", "/Library", "/Users"]
+                .map(PathBuf::from)
+                .to_vec(),
+        );
+        let users = tree
+            .node_for_path(std::path::Path::new("/Users"))
+            .unwrap()
+            .id;
+        tree.set_children(users, vec![PathBuf::from("/Users/seunghanlee")]);
+        let home = tree
+            .node_for_path(std::path::Path::new("/Users/seunghanlee"))
+            .unwrap()
+            .id;
+        tree.set_children(
+            home,
+            ["Desktop", "Documents", "Downloads", "Library"]
+                .map(|name| PathBuf::from("/Users/seunghanlee").join(name))
+                .to_vec(),
+        );
+        let selected_path = PathBuf::from("/Users/seunghanlee/Library");
+        tree.expand_ancestors(&selected_path);
+        let selected = tree.node_for_path(&selected_path).unwrap().id;
+        tree.select_node(selected);
+        tree.set_children(
+            selected,
+            ["Accessibility", "Accounts", "Application Support"]
+                .map(|name| selected_path.join(name))
+                .to_vec(),
+        );
+        tree.expand_ancestors(&selected_path);
+        tree.select_node(selected);
+        state.mcd = Some(tree);
+        state.screen = Screen::Mcd;
+
+        let metrics = crate::layout::calculate_for_entries(
+            state.viewport,
+            state.layout_settings,
+            state.entries.len(),
+        );
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, &state, &metrics))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let output = rendered(&state, 120, 30);
+        assert!(output.contains("Mdir4 Change Directory"));
+        assert!(output.contains("/Users/seunghanlee/Library"));
+        assert!(output.contains("Accessibility"));
+        assert!(!output.contains("Horizontal tree"));
+        assert_snapshot!("mcd-hierarchy-map", output);
+
+        let mut library_cell = None;
+        for y in 1..27 {
+            for x in 0..=112 {
+                let matches = "Library".chars().enumerate().all(|(offset, character)| {
+                    buffer[(x + offset as u16, y)].symbol() == character.to_string()
+                });
+                if matches && buffer[(x, y)].bg == Color::Cyan {
+                    library_cell = Some((x, y));
+                }
+            }
+        }
+        let (x, y) = library_cell.expect("selected Library must be visible");
+        assert_eq!(buffer[(x, y)].bg, Color::Cyan);
+        assert_eq!(buffer[(x.saturating_sub(1), y)].bg, Color::Blue);
     }
 
     #[test]
@@ -1586,8 +1921,10 @@ mod tests {
 
         let output = rendered(&state, 80, 25);
         assert!(output.contains("Mdir4 Change Directory"));
-        assert!(output.contains(&format!("> ├─ {selected_name}")));
-        assert!(output.contains("PgUp/PgDn"));
+        assert!(output.contains("Mdir4 Change Directory"));
+        assert!(!output.contains("Horizontal tree"));
+        assert!(output.contains(&selected_name));
+        assert!(output.contains("F2 Rescan"));
         assert!(!output.contains("stale-main.txt"));
         assert!(!output.contains("Files 1"));
     }

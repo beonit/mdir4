@@ -23,7 +23,7 @@ expression: "rendered(&empty, 80, 25)"
                                                                                 
                                                                                 
                                                                                 
-(no items)                                                                      
-Files 0  Dirs 0  Selected 0 / 0B  Free --  Items 0                              
-Enter Open  Backspace Parent  Space Mark  R Refresh  Ctrl+Q Quit                
-1Help 2Ren 3View 4Edit 5Copy 6Move 7Dir 8Del 9--- 10MCD 11QCD 12Menu
+                                                                                
+(no items)                                           │ F 0  D 0  S 0/0B  -- Free
+F1 Help       F2 Ren        F3 View      F4 Edit      F5 Copy      F6 Move      
+F7 Dir        F8 Del        F9 ---       F10 MCD      F11 QCD      F12 Menu

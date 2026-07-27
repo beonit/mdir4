@@ -3,27 +3,27 @@ source: src/ui.rs
 expression: "rendered(&state, 80, 25)"
 ---
 /work                                                                           
-FILE001.TXT                        1.0K│FILE021.TXT            21.0K ----- --:--
-FILE002.TXT                        2.0K│FILE022.TXT            22.0K ----- --:--
-FILE003.TXT                        3.0K│FILE023.TXT            23.0K ----- --:--
-FILE004.TXT                        4.0K│FILE024.TXT            24.0K ----- --:--
-FILE005.TXT                        5.0K│FILE025.TXT            25.0K ----- --:--
-FILE006.TXT                        6.0K│FILE026.TXT            26.0K ----- --:--
-FILE007.TXT                        7.0K│FILE027.TXT            27.0K ----- --:--
-FILE008.TXT                        8.0K│FILE028.TXT            28.0K ----- --:--
-FILE009.TXT                        9.0K│                                        
-FILE010.TXT                       10.0K│                                        
-FILE011.TXT                       11.0K│                                        
-FILE012.TXT                       12.0K│                                        
-FILE013.TXT                       13.0K│                                        
-FILE014.TXT                       14.0K│                                        
-FILE015.TXT                       15.0K│                                        
-FILE016.TXT                       16.0K│                                        
-FILE017.TXT                       17.0K│                                        
-FILE018.TXT                       18.0K│                                        
-FILE019.TXT                       19.0K│                                        
-FILE020.TXT                       20.0K│                                        
-FILE003.TXT   FILE   3.0K   ----                                                
-Files 28  Dirs 0  Selected 1 / 2.0K  Free --  Items 28                          
-Enter Open  Backspace Parent  Space Mark  R Refresh  Ctrl+Q Quit                
-1Help 2Ren 3View 4Edit 5Copy 6Move 7Dir 8Del 9--- 10MCD 11QCD 12Menu
+  FILE001.TXT                      1.0K│  FILE022.TXT                      22.0K
+  FILE002.TXT                      2.0K│  FILE023.TXT                      23.0K
+  FILE003.TXT                      3.0K│  FILE024.TXT                      24.0K
+  FILE004.TXT                      4.0K│  FILE025.TXT                      25.0K
+  FILE005.TXT                      5.0K│  FILE026.TXT                      26.0K
+  FILE006.TXT                      6.0K│  FILE027.TXT                      27.0K
+  FILE007.TXT                      7.0K│  FILE028.TXT                      28.0K
+  FILE008.TXT                      8.0K│                                        
+  FILE009.TXT                      9.0K│                                        
+  FILE010.TXT                     10.0K│                                        
+  FILE011.TXT                     11.0K│                                        
+  FILE012.TXT                     12.0K│                                        
+  FILE013.TXT                     13.0K│                                        
+  FILE014.TXT                     14.0K│                                        
+  FILE015.TXT                     15.0K│                                        
+  FILE016.TXT                     16.0K│                                        
+  FILE017.TXT                     17.0K│                                        
+  FILE018.TXT                     18.0K│                                        
+  FILE019.TXT                     19.0K│                                        
+  FILE020.TXT                     20.0K│                                        
+  FILE021.TXT                     21.0K│                                        
+FILE003.TXT  3.0K FILE                            │ F 28  D 0  S 1/2.0K  -- Free
+F1 Help       F2 Ren        F3 View      F4 Edit      F5 Copy      F6 Move      
+F7 Dir        F8 Del        F9 ---       F10 MCD      F11 QCD      F12 Menu

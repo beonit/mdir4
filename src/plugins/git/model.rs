@@ -56,6 +56,13 @@ pub struct RepositoryIdentity {
     pub worktree_root: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryStatus {
+    pub worktree_root: PathBuf,
+    pub directory_prefix: PathBuf,
+    pub rows: Vec<GitStatusRow>,
+}
+
 pub trait GitReadBackend: Send + Sync {
     fn discover(&self, directory: &Path) -> Result<Option<RepositoryIdentity>, String>;
     fn status(&self, repository: &RepositoryIdentity) -> Result<Vec<GitStatusRow>, String>;
