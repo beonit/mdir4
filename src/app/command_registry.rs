@@ -39,7 +39,7 @@ pub enum CommandId {
     Move,
     MakeDirectory,
     Delete,
-    Reserved,
+    Shell,
     Mcd,
     Qcd,
     Menu,
@@ -217,7 +217,7 @@ impl Default for CommandRegistry {
             function(Id::Move, 6, "Move", true),
             function(Id::MakeDirectory, 7, "Dir", true),
             function(Id::Delete, 8, "Del", true),
-            function(Id::Reserved, 9, "---", false),
+            function(Id::Shell, 9, "Shell", true),
             function(Id::Mcd, 10, "MCD", true),
             function(Id::Qcd, 11, "QCD", true),
             function(Id::Menu, 12, "Menu", true),
@@ -545,6 +545,7 @@ fn command_id(name: &str) -> Option<CommandId> {
             "move" => Move,
             "makedirectory" => MakeDirectory,
             "delete" => Delete,
+            "shell" => Shell,
             "sort" | "sortkeynext" => SortKeyNext,
             "sortdirection" => SortDirectionToggle,
             "togglehidden" => ToggleHidden,
@@ -631,6 +632,7 @@ fn action(id: CommandId) -> Action {
         CommandId::Move => Action::ShowMove,
         CommandId::MakeDirectory => Action::ShowMakeDirectory,
         CommandId::Delete => Action::ShowDelete { permanent: false },
+        CommandId::Shell => Action::ShowShellCommand,
         CommandId::SortKeyNext => Action::SortKeyNext,
         CommandId::SortDirectionToggle => Action::SortDirectionToggle,
         CommandId::ToggleHidden => Action::ToggleHidden,
@@ -651,7 +653,6 @@ fn action(id: CommandId) -> Action {
         CommandId::GitShortcutFetch => Action::GitFetch,
         CommandId::GitShortcutLog => Action::ShowGitLog,
         CommandId::GitShortcutStash => Action::ShowGitStashSave,
-        _ => Action::ClearMessage,
     }
 }
 

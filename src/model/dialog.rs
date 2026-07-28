@@ -14,6 +14,7 @@ pub enum InputPurpose {
     GitCommitMessage,
     GitStashMessage,
     GitBranchName,
+    ShellCommand,
     SearchEditor,
     QcdLabel,
     McdSearch,

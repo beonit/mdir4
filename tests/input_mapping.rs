@@ -221,7 +221,7 @@ fn custom_keymap_updates_display_and_mapping_with_item_fallback() {
 }
 
 #[test]
-fn all_function_keys_exist_once_and_f9_is_visible_but_disabled() {
+fn all_function_keys_exist_once_and_f9_runs_a_shell_command() {
     let registry = CommandRegistry::default();
     let functions: Vec<_> = registry.function_commands().collect();
     assert_eq!(functions.len(), 12);
@@ -236,9 +236,13 @@ fn all_function_keys_exist_once_and_f9_is_visible_but_disabled() {
         .iter()
         .find(|command| command.function_key == Some(9))
         .unwrap();
-    assert_eq!(f9.label, "---");
-    assert!(!f9.enabled);
-    assert!(registry.function_bar_text().contains("9---"));
+    assert_eq!(f9.label, "Shell");
+    assert!(f9.enabled);
+    assert!(registry.function_bar_text().contains("9Shell"));
+    assert!(matches!(
+        registry.action_for(KeyChord::plain(KeyCode::Function(9))),
+        Some(Action::ShowShellCommand)
+    ));
 }
 
 #[test]

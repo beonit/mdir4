@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     env,
     ffi::{OsStr, OsString},
-    io::{self, Stdout, stdout},
+    io::{self, Stdout, Write, stdout},
     path::{Path, PathBuf},
     process::Command,
     sync::{Arc, Mutex, Once, mpsc},
@@ -11,10 +11,13 @@ use std::{
 };
 
 use crossterm::{
-    cursor::{Hide, Show},
-    event::{self, Event},
+    cursor::{Hide, MoveTo, Show},
+    event::{self, Event, KeyCode as CrosstermKeyCode, KeyEvent, KeyEventKind},
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode,
+    },
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use thiserror::Error;
@@ -62,20 +65,73 @@ pub enum AppError {
     Io(#[from] io::Error),
     #[error("starting directory does not exist: {0}")]
     MissingStartPath(PathBuf),
+    #[error("invalid command line: {0}")]
+    InvalidArguments(String),
 }
 
 pub fn run() -> Result<(), AppError> {
+    let options = parse_args(env::args_os().skip(1))?;
     let config_path = config_path();
     let loaded = crate::config::load_or_default(&config_path);
-    let start_path = start_path(&loaded.config)?;
+    let start_path = start_path(&loaded.config, options.start_path)?;
     install_panic_hook();
     let mut session = TerminalSession::new()?;
-    run_loop(&mut session, start_path, config_path, loaded)
+    let final_path = run_loop(&mut session, start_path, config_path, loaded)?;
+    drop(session);
+    if let Some(cwd_file) = options.cwd_file {
+        write_cwd_file(&cwd_file, &final_path)?;
+    }
+    Ok(())
 }
 
-fn start_path(config: &crate::config::Config) -> Result<PathBuf, AppError> {
+#[derive(Debug, Default, PartialEq, Eq)]
+struct CliOptions {
+    start_path: Option<PathBuf>,
+    cwd_file: Option<PathBuf>,
+}
+
+fn parse_args(arguments: impl IntoIterator<Item = OsString>) -> Result<CliOptions, AppError> {
+    let mut options = CliOptions::default();
+    let mut arguments = arguments.into_iter();
+    while let Some(argument) = arguments.next() {
+        if argument == "--cwd-file" {
+            let path = arguments
+                .next()
+                .ok_or_else(|| AppError::InvalidArguments("--cwd-file requires a path".into()))?;
+            options.cwd_file = Some(PathBuf::from(path));
+        } else if let Some(path) = argument
+            .to_str()
+            .and_then(|argument| argument.strip_prefix("--cwd-file="))
+        {
+            if path.is_empty() {
+                return Err(AppError::InvalidArguments(
+                    "--cwd-file requires a path".into(),
+                ));
+            }
+            options.cwd_file = Some(PathBuf::from(path));
+        } else if argument.to_string_lossy().starts_with('-') {
+            return Err(AppError::InvalidArguments(format!(
+                "unknown option {}",
+                argument.to_string_lossy()
+            )));
+        } else if options
+            .start_path
+            .replace(PathBuf::from(argument))
+            .is_some()
+        {
+            return Err(AppError::InvalidArguments(
+                "only one starting directory may be supplied".into(),
+            ));
+        }
+    }
+    Ok(options)
+}
+
+fn start_path(
+    config: &crate::config::Config,
+    explicit: Option<PathBuf>,
+) -> Result<PathBuf, AppError> {
     let current = env::current_dir()?;
-    let explicit = env::args_os().nth(1).map(PathBuf::from);
     let home = env::var_os("HOME").map(PathBuf::from);
     let path = explicit.unwrap_or_else(|| {
         crate::config::resolve_start_path(config.last_path.as_deref(), home.as_deref(), &current)
@@ -85,6 +141,10 @@ fn start_path(config: &crate::config::Config) -> Result<PathBuf, AppError> {
     } else {
         Err(AppError::MissingStartPath(path))
     }
+}
+
+fn write_cwd_file(path: &Path, directory: &Path) -> io::Result<()> {
+    std::fs::write(path, directory.as_os_str().as_encoded_bytes())
 }
 
 fn config_path() -> PathBuf {
@@ -106,7 +166,7 @@ fn run_loop(
     start_path: PathBuf,
     config_path: PathBuf,
     loaded: crate::config::LoadedConfig,
-) -> Result<(), AppError> {
+) -> Result<PathBuf, AppError> {
     let size = session.terminal.size()?;
     let mut state = AppState::new(
         start_path,
@@ -164,10 +224,17 @@ fn run_loop(
     );
     let mut dirty = true;
     let mut foreground_editors = VecDeque::new();
+    let mut foreground_shell_commands = VecDeque::new();
 
     loop {
         if !actions.is_empty() {
-            dirty |= drain_actions(&mut state, &mut actions, &worker, &mut foreground_editors);
+            dirty |= drain_actions(
+                &mut state,
+                &mut actions,
+                &worker,
+                &mut foreground_editors,
+                &mut foreground_shell_commands,
+            );
         }
         while let Some(path) = foreground_editors.pop_front() {
             match external_editor_from_environment() {
@@ -193,6 +260,11 @@ fn run_loop(
                 }
             }
         }
+        while let Some(request) = foreground_shell_commands.pop_front() {
+            let result = launch_shell_command(session, &request.directory, &request.command)?;
+            actions.push_back(Action::ShellCommandFinished(result));
+            dirty = true;
+        }
         while let Some(action) = worker.try_action() {
             actions.push_back(action);
         }
@@ -211,7 +283,7 @@ fn run_loop(
             if let Some(path) = &state.config_path {
                 let _ = crate::config::save_atomic(path, &app::config_from_state(&state));
             }
-            return Ok(());
+            return Ok(state.current_path);
         }
 
         if event::poll(Duration::from_millis(50))? {
@@ -237,21 +309,102 @@ fn drain_actions(
     actions: &mut VecDeque<Action>,
     worker: &EffectWorker,
     foreground_editors: &mut VecDeque<PathBuf>,
+    foreground_shell_commands: &mut VecDeque<ShellCommand>,
 ) -> bool {
     let mut dirty = false;
     while let Some(action) = actions.pop_front() {
         dirty |= !matches!(action, Action::Tick);
         for effect in app::reduce(state, action) {
-            if let Effect::LoadEditor(path) = effect {
-                foreground_editors.push_back(path);
-                continue;
-            }
-            if worker.submit(effect).is_err() {
-                state.message = Some("Worker is busy; try again shortly.".to_string());
+            match effect {
+                Effect::LoadEditor(path) => foreground_editors.push_back(path),
+                Effect::RunShellCommand { directory, command } => {
+                    foreground_shell_commands.push_back(ShellCommand { directory, command });
+                }
+                effect => {
+                    if worker.submit(effect).is_err() {
+                        state.message = Some("Worker is busy; try again shortly.".to_string());
+                    }
+                }
             }
         }
     }
     dirty
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShellCommand {
+    directory: PathBuf,
+    command: String,
+}
+
+fn launch_shell_command(
+    session: &mut TerminalSession,
+    directory: &Path,
+    command: &str,
+) -> Result<Result<(), String>, AppError> {
+    let shell = env::var_os("SHELL")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| OsString::from("/bin/sh"));
+
+    session.suspend();
+    let result = run_shell_process(&shell, directory, command);
+    let wait_result = show_shell_completion(&result).and_then(|()| wait_for_any_key());
+    let resume_result = session.resume();
+    wait_result?;
+    resume_result?;
+    Ok(result)
+}
+
+fn run_shell_process(shell: &OsStr, directory: &Path, command: &str) -> Result<(), String> {
+    let mut output = stdout();
+    execute!(output, Clear(ClearType::All), MoveTo(0, 0))
+        .map_err(|error| format!("could not clear terminal: {error}"))?;
+
+    let status = shell_process(shell, directory, command)
+        .status()
+        .map_err(|error| format!("could not start {shell:?}: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("process exited with {status}"))
+    }
+}
+
+fn shell_process(shell: &OsStr, directory: &Path, command: &str) -> Command {
+    let mut process = Command::new(shell);
+    if !command.is_empty() {
+        process.args(["-c", command]);
+    }
+    process.current_dir(directory);
+    process
+}
+
+fn show_shell_completion(result: &Result<(), String>) -> io::Result<()> {
+    let mut output = stdout();
+    match result {
+        Ok(()) => writeln!(output, "\n[mdir4] Command finished."),
+        Err(error) => writeln!(output, "\n[mdir4] {error}"),
+    }?;
+    write!(output, "[mdir4] Press Enter or Esc to return...")?;
+    output.flush()
+}
+
+fn wait_for_any_key() -> io::Result<()> {
+    enable_raw_mode()?;
+    let result = loop {
+        match event::read() {
+            Ok(Event::Key(key)) if is_shell_return_key(key) => break Ok(()),
+            Ok(_) => {}
+            Err(error) => break Err(error),
+        }
+    };
+    let disable_result = disable_raw_mode();
+    result.and(disable_result)
+}
+
+fn is_shell_return_key(key: KeyEvent) -> bool {
+    key.kind != KeyEventKind::Release
+        && matches!(key.code, CrosstermKeyCode::Enter | CrosstermKeyCode::Esc)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -398,6 +551,9 @@ impl EffectWorker {
                 let action = match effect {
                     Effect::CancelOperation => continue,
                     Effect::ResolveConflict(_) => continue,
+                    Effect::RunShellCommand { .. } => Action::ShellCommandFinished(Err(
+                        "shell commands must run in the foreground".to_string(),
+                    )),
                     Effect::LoadDirectory(path) => {
                         let result = directory::load_directory(filesystem.as_ref(), &path);
                         Action::DirectoryLoaded { path, result }
@@ -1044,6 +1200,76 @@ mod tests {
         app::Screen,
         layout::Direction,
     };
+
+    #[test]
+    fn cli_parses_start_directory_and_cwd_file_in_either_order() {
+        let first = parse_args([
+            OsString::from("--cwd-file"),
+            OsString::from("/tmp/mdir4.cwd"),
+            OsString::from("/work"),
+        ])
+        .unwrap();
+        let second = parse_args([
+            OsString::from("/work"),
+            OsString::from("--cwd-file=/tmp/mdir4.cwd"),
+        ])
+        .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.start_path, Some(PathBuf::from("/work")));
+        assert_eq!(first.cwd_file, Some(PathBuf::from("/tmp/mdir4.cwd")));
+        assert!(parse_args([OsString::from("--cwd-file")]).is_err());
+        assert!(parse_args([OsString::from("/one"), OsString::from("/two")]).is_err());
+    }
+
+    #[test]
+    fn cwd_file_contains_the_exact_final_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("cwd");
+        let selected = directory.path().join("한글 folder");
+        write_cwd_file(&output, &selected).unwrap();
+        assert_eq!(
+            std::fs::read(output).unwrap(),
+            selected.as_os_str().as_encoded_bytes()
+        );
+    }
+
+    #[test]
+    fn shell_command_uses_the_user_shell_and_current_browser_directory() {
+        let process = shell_process(
+            OsStr::new("/bin/zsh"),
+            Path::new("/work/project"),
+            "mvn build",
+        );
+        assert_eq!(process.get_program(), OsStr::new("/bin/zsh"));
+        assert_eq!(
+            process.get_args().collect::<Vec<_>>(),
+            vec![OsStr::new("-c"), OsStr::new("mvn build")]
+        );
+        assert_eq!(process.get_current_dir(), Some(Path::new("/work/project")));
+
+        let interactive = shell_process(OsStr::new("/bin/zsh"), Path::new("/work"), "");
+        assert_eq!(interactive.get_args().count(), 0);
+    }
+
+    #[test]
+    fn shell_result_waits_for_enter_or_escape_only() {
+        assert!(is_shell_return_key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE
+        )));
+        assert!(is_shell_return_key(KeyEvent::new(
+            KeyCode::Esc,
+            KeyModifiers::NONE
+        )));
+        assert!(!is_shell_return_key(KeyEvent::new(
+            KeyCode::Up,
+            KeyModifiers::NONE
+        )));
+        assert!(!is_shell_return_key(KeyEvent::new(
+            KeyCode::Char('q'),
+            KeyModifiers::NONE
+        )));
+    }
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[derive(Default)]
@@ -1358,11 +1584,13 @@ mod tests {
         let mut app = state(Screen::Main);
         let mut actions = VecDeque::from([Action::Tick]);
         let mut foreground_editors = VecDeque::new();
+        let mut foreground_shell_commands = VecDeque::new();
         assert!(!drain_actions(
             &mut app,
             &mut actions,
             &worker,
-            &mut foreground_editors
+            &mut foreground_editors,
+            &mut foreground_shell_commands,
         ));
     }
 

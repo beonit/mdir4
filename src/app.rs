@@ -104,6 +104,8 @@ pub enum Action {
     },
     ShowViewer,
     ShowEditor,
+    ShowShellCommand,
+    ShellCommandFinished(Result<(), String>),
     ExternalEditorFinished {
         path: PathBuf,
         result: Result<(), String>,
@@ -308,6 +310,10 @@ pub enum Effect {
     CreateDirectory(PathBuf),
     LoadViewer(PathBuf),
     LoadEditor(PathBuf),
+    RunShellCommand {
+        directory: PathBuf,
+        command: String,
+    },
     SaveFile {
         path: PathBuf,
         contents: Vec<u8>,
@@ -1267,6 +1273,24 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 return vec![Effect::LoadEditor(path)];
             }
         }
+        Action::ShowShellCommand => {
+            state.input_dialog = Some(InputDialog::new(
+                "Run Shell Command",
+                "Command (blank opens an interactive shell)",
+                "",
+                InputPurpose::ShellCommand,
+                None,
+            ));
+            state.screen = Screen::InputDialog;
+        }
+        Action::ShellCommandFinished(result) => {
+            state.screen = Screen::Main;
+            state.message = Some(match result {
+                Ok(()) => "Shell command finished.".to_string(),
+                Err(error) => format!("Shell command failed: {error}"),
+            });
+            return vec![Effect::LoadDirectory(state.current_path.clone())];
+        }
         Action::ExternalEditorFinished { path, result } => {
             state.editor = None;
             state.screen = Screen::Main;
@@ -1444,6 +1468,13 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                                 None
                             }
                         }
+                    }
+                    InputPurpose::ShellCommand => {
+                        state.screen = Screen::Main;
+                        return vec![Effect::RunShellCommand {
+                            directory: state.current_path.clone(),
+                            command: value,
+                        }];
                     }
                     InputPurpose::SearchEditor => {
                         if let Some((_, editor)) = &mut state.editor
@@ -2593,6 +2624,35 @@ mod tests {
         reduce(&mut app, Action::CloseOverlay);
         assert_eq!(app.screen, Screen::GitStatus);
         assert!(app.git_diff.is_none());
+    }
+
+    #[test]
+    fn shell_command_runs_in_the_current_directory_and_refreshes_afterwards() {
+        let mut app = state();
+        assert!(reduce(&mut app, Action::ShowShellCommand).is_empty());
+        assert_eq!(app.screen, Screen::InputDialog);
+        assert_eq!(
+            app.input_dialog.as_ref().map(|dialog| dialog.purpose),
+            Some(InputPurpose::ShellCommand)
+        );
+
+        for character in "mvn build".chars() {
+            reduce(&mut app, Action::DialogCharacter(character));
+        }
+        assert_eq!(
+            reduce(&mut app, Action::ConfirmDialog),
+            vec![Effect::RunShellCommand {
+                directory: PathBuf::from("/test"),
+                command: "mvn build".into(),
+            }]
+        );
+        assert_eq!(app.screen, Screen::Main);
+
+        assert_eq!(
+            reduce(&mut app, Action::ShellCommandFinished(Ok(()))),
+            vec![Effect::LoadDirectory(PathBuf::from("/test"))]
+        );
+        assert_eq!(app.message.as_deref(), Some("Shell command finished."));
     }
 
     #[test]
