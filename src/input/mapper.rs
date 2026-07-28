@@ -17,7 +17,9 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
     if screen == Screen::AmazonBuild {
         return match chord {
             KeyChord {
-                code: KeyCode::Escape,
+                code: KeyCode::Escape | KeyCode::Character('q' | 'Q'),
+                control: false,
+                alt: false,
                 ..
             } => Some(Action::CloseOverlay),
             KeyChord {
@@ -782,6 +784,15 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
     }
     if chord == KeyChord::shift(KeyCode::Function(8)) {
         return Some(Action::ShowDelete { permanent: true });
+    }
+    if screen == Screen::Main
+        && !chord.control
+        && !chord.alt
+        && !chord.shift
+        && let KeyCode::Character(character) = chord.code
+        && character != ' '
+    {
+        return Some(Action::TypeSearch(character));
     }
     registry.action_for(chord)
 }

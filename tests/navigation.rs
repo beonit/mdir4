@@ -192,6 +192,7 @@ fn resize_keeps_the_selected_entry_identity() {
         entries,
         selected: 137,
         marked: HashSet::new(),
+        type_search: None,
         viewport: Viewport {
             width: 80,
             height: 25,

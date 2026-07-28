@@ -62,6 +62,7 @@ fn ten_thousand_entry_navigation_and_render_smoke() {
         entries,
         selected: 0,
         marked: Default::default(),
+        type_search: None,
         viewport: Viewport {
             width: 160,
             height: 50,

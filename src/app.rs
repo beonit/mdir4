@@ -81,6 +81,7 @@ pub enum Action {
         result: Result<bool, String>,
     },
     Tick,
+    TypeSearch(char),
     Move(Direction),
     Page(PageDirection),
     Home,
@@ -439,6 +440,7 @@ pub struct AppState {
     pub entries: Vec<FileEntry>,
     pub selected: usize,
     pub marked: HashSet<EntryId>,
+    pub type_search: Option<(String, std::time::Instant)>,
     pub viewport: Viewport,
     pub layout_settings: LayoutSettings,
     pub screen: Screen,
@@ -503,6 +505,7 @@ impl AppState {
             entries: Vec::new(),
             selected: 0,
             marked: HashSet::new(),
+            type_search: None,
             viewport,
             layout_settings: LayoutSettings::default(),
             screen: Screen::Main,
@@ -705,7 +708,33 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::FileLaunched { path: _, result } => {
             state.message = result.err();
         }
-        Action::Tick => {}
+        Action::Tick => {
+            if state.type_search.as_ref().is_some_and(|(_, updated)| {
+                updated.elapsed() >= std::time::Duration::from_millis(900)
+            }) {
+                state.type_search = None;
+            }
+        }
+        Action::TypeSearch(character) => {
+            let now = std::time::Instant::now();
+            let query = match &state.type_search {
+                Some((query, updated))
+                    if updated.elapsed() < std::time::Duration::from_millis(900) =>
+                {
+                    format!("{query}{character}")
+                }
+                _ => character.to_string(),
+            };
+            let folded = query.to_lowercase();
+            if let Some(index) = state
+                .entries
+                .iter()
+                .position(|entry| entry.display_name().to_lowercase().starts_with(&folded))
+            {
+                state.selected = index;
+            }
+            state.type_search = Some((query, now));
+        }
         Action::Move(direction) => {
             let metrics = layout::calculate_for_entries(
                 state.viewport,
@@ -2674,6 +2703,7 @@ mod tests {
             entries: vec![entry("a", EntryKind::File), entry("b", EntryKind::File)],
             selected: 0,
             marked: HashSet::new(),
+            type_search: None,
             viewport: Viewport {
                 width: 80,
                 height: 25,
@@ -2841,6 +2871,22 @@ mod tests {
             [Effect::LoadDirectory(path)] if path == Path::new("/test")
         ));
         assert_eq!(app.screen, Screen::AmazonBuild);
+    }
+
+    #[test]
+    fn typeahead_selects_a_file_name_prefix_case_insensitively() {
+        let mut app = state();
+        app.entries = vec![
+            entry("readme.md", EntryKind::File),
+            entry("src", EntryKind::Directory),
+        ];
+        reduce(&mut app, Action::TypeSearch('s'));
+        assert_eq!(app.selected, 1);
+        reduce(&mut app, Action::TypeSearch('r'));
+        assert_eq!(app.selected, 1);
+        app.type_search = None;
+        reduce(&mut app, Action::TypeSearch('R'));
+        assert_eq!(app.selected, 0);
     }
 
     #[test]

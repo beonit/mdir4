@@ -1367,6 +1367,7 @@ mod tests {
             entries: Vec::new(),
             selected: 0,
             marked: HashSet::new(),
+            type_search: None,
             viewport: Viewport {
                 width: 80,
                 height: 25,

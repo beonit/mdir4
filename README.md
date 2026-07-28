@@ -83,7 +83,7 @@ mdir4 --cwd-file /tmp/mdir4-last-directory /starting/directory
 | Key | Action |
 | --- | --- |
 | `↑` `↓` `←` `→` | Navigate items, columns, and page boundaries spatially |
-| `Enter` / `Backspace` | Open an item or return to the parent directory |
+| `Enter` | Open an item (select `<UP>` to return to the parent directory) |
 | `Home` `End` / `PgUp` `PgDn` | Jump to the first/last item or previous/next page |
 | `Space` / `Insert` / `Ctrl+A` | Mark an item / mark and advance / mark all |
 | `R` / `S` / `Ctrl+S` / `H` | Refresh / change sort key / reverse sort / toggle hidden files |

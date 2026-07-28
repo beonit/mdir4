@@ -18,11 +18,11 @@ expression: "rendered(&basic, 80, 25)"
 │                         │Ctrl+F12 Git Refresh     │Stash: F5 Apply, F7 Save  │
 │Navigation / Global      │                         │       F8 Drop            │
 │Arrows/Pg/Home/End Browse│Git File Markers         │Branch: Enter Switch      │
-│Enter/Backspace Open/Par…│M Modified   A Added     │        F7 New, F8 Rebase │
+│Enter Open / Select <UP>…│M Modified   A Added     │        F7 New, F8 Rebase │
 │Space/Ins/Ctrl+A Mark    │D Deleted    R Renamed   │Log: Enter/F3 Detail      │
 │Esc Clear Selection      │? Untracked  ! Conflict  │                          │
-│R Refresh  S/Ctrl+S Sort │                         │Ctrl+F6 Amend HEAD        │
-│H Hidden  Tab View       │                         │  staged changes, keep m… │
+│Ctrl+R Refresh  Ctrl+Shi…│                         │Ctrl+F6 Amend HEAD        │
+│Ctrl+H Hidden  Tab View  │                         │  staged changes, keep m… │
 │Alt+O Settings  Ctrl+Q Q…│                         │Ctrl+F7 Choose rebase ta… │
 │Esc or F1 Close Help     │                         │Ctrl+F8 Fetch all / prune │
 │                         │                         │                          │

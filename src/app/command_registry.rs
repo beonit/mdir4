@@ -89,6 +89,13 @@ impl Default for CommandRegistry {
             command(Id::MoveDown, KeyChord::plain(Key::Down), "Down", None, true),
             command(Id::MoveLeft, KeyChord::plain(Key::Left), "Left", None, true),
             command(
+                Id::Refresh,
+                KeyChord::control(Key::Character('r')),
+                "Refresh",
+                None,
+                true,
+            ),
+            command(
                 Id::MoveRight,
                 KeyChord::plain(Key::Right),
                 "Right",
@@ -96,6 +103,18 @@ impl Default for CommandRegistry {
                 true,
             ),
             command(Id::PageUp, KeyChord::plain(Key::PageUp), "PgUp", None, true),
+            command(
+                Id::SortKeyNext,
+                KeyChord {
+                    code: Key::Character('s'),
+                    control: true,
+                    alt: false,
+                    shift: true,
+                },
+                "Sort",
+                None,
+                true,
+            ),
             command(
                 Id::PageDown,
                 KeyChord::plain(Key::PageDown),
@@ -107,9 +126,9 @@ impl Default for CommandRegistry {
             command(Id::End, KeyChord::plain(Key::End), "End", None, true),
             command(Id::Open, KeyChord::plain(Key::Enter), "Open", None, true),
             command(
-                Id::Parent,
-                KeyChord::plain(Key::Backspace),
-                "Parent",
+                Id::ToggleHidden,
+                KeyChord::control(Key::Character('h')),
+                "Hidden Files",
                 None,
                 true,
             ),
@@ -142,13 +161,6 @@ impl Default for CommandRegistry {
                 true,
             ),
             command(
-                Id::Refresh,
-                KeyChord::plain(Key::Character('r')),
-                "Refresh",
-                None,
-                true,
-            ),
-            command(
                 Id::Quit,
                 KeyChord::control(Key::Character('q')),
                 "Quit",
@@ -156,23 +168,9 @@ impl Default for CommandRegistry {
                 true,
             ),
             command(
-                Id::SortKeyNext,
-                KeyChord::plain(Key::Character('s')),
-                "Sort",
-                None,
-                true,
-            ),
-            command(
                 Id::SortDirectionToggle,
                 KeyChord::control(Key::Character('s')),
                 "Sort Direction",
-                None,
-                true,
-            ),
-            command(
-                Id::ToggleHidden,
-                KeyChord::plain(Key::Character('h')),
-                "Hidden Files",
                 None,
                 true,
             ),

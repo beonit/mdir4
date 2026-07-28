@@ -143,6 +143,17 @@ fn control_g_opens_git_status_and_escape_closes_the_plugin_view() {
 }
 
 #[test]
+fn main_characters_are_file_name_typeahead_not_refresh_sort_or_hidden_shortcuts() {
+    let registry = CommandRegistry::default();
+    for character in ['r', 's', 'h'] {
+        assert!(matches!(
+            mapper::map_chord(Screen::Main, KeyChord::plain(KeyCode::Character(character)), &registry),
+            Some(Action::TypeSearch(value)) if value == character
+        ));
+    }
+}
+
+#[test]
 fn control_b_opens_amazon_build_and_its_keys_run_the_selected_command() {
     let registry = CommandRegistry::default();
     assert!(matches!(
@@ -168,6 +179,14 @@ fn control_b_opens_amazon_build_and_its_keys_run_the_selected_command() {
             &registry
         ),
         Some(Action::AmazonBuildRun)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::AmazonBuild,
+            KeyChord::plain(KeyCode::Character('q')),
+            &registry
+        ),
+        Some(Action::CloseOverlay)
     ));
 }
 
