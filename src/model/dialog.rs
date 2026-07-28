@@ -6,8 +6,6 @@ use unicode_segmentation::UnicodeSegmentation;
 pub enum InputPurpose {
     Rename,
     MakeDirectory,
-    Copy,
-    Move,
     SaveAs,
     SearchViewer,
     SearchGitDiff,
@@ -16,7 +14,8 @@ pub enum InputPurpose {
     GitBranchName,
     ShellCommand,
     SearchEditor,
-    QcdLabel,
+    FavoritePath,
+    FavoriteAdd,
     McdSearch,
 }
 
@@ -124,6 +123,9 @@ pub enum ConfirmOperation {
     },
     GitRebase {
         target: String,
+    },
+    FavoriteDelete {
+        index: usize,
     },
 }
 

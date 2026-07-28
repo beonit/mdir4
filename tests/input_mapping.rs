@@ -98,6 +98,14 @@ fn control_g_opens_git_status_and_escape_closes_the_plugin_view() {
             KeyChord::plain(KeyCode::Function(8)),
             &registry
         ),
+        Some(Action::ShowGitAmend)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::GitStatus,
+            KeyChord::plain(KeyCode::Function(9)),
+            &registry
+        ),
         Some(Action::ShowGitStash)
     ));
     assert!(matches!(
@@ -123,6 +131,164 @@ fn control_g_opens_git_status_and_escape_closes_the_plugin_view() {
             &registry
         ),
         Some(Action::ShowGitDiffSearch)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::GitDiff,
+            KeyChord::plain(KeyCode::Function(4)),
+            &registry
+        ),
+        Some(Action::GitDiffToggleSideBySide)
+    ));
+}
+
+#[test]
+fn escape_clears_selection_on_the_main_screen() {
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Main,
+            KeyChord::plain(KeyCode::Escape),
+            &CommandRegistry::default()
+        ),
+        Some(Action::ClearSelection)
+    ));
+}
+
+#[test]
+fn favorite_shortcuts_open_register_and_jump_to_slots_one_through_zero() {
+    let registry = CommandRegistry::default();
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Main,
+            KeyChord::control(KeyCode::Character('f')),
+            &registry
+        ),
+        Some(Action::ShowFavorites)
+    ));
+
+    for (key, slot) in [('1', 0), ('9', 8), ('0', 9)] {
+        assert!(matches!(
+            mapper::map_chord(
+                Screen::Main,
+                KeyChord::control(KeyCode::Character(key)),
+                &registry
+            ),
+            Some(Action::FavoritesShortcut(index)) if index == slot
+        ));
+        assert!(matches!(
+            mapper::map_chord(
+                Screen::Main,
+                KeyChord {
+                    code: KeyCode::Character(key),
+                    control: true,
+                    alt: false,
+                    shift: true,
+                },
+                &registry
+            ),
+            Some(Action::FavoritesRegisterSlot(index)) if index == slot
+        ));
+    }
+
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Main,
+            KeyChord {
+                code: KeyCode::Character('#'),
+                control: true,
+                alt: false,
+                shift: true,
+            },
+            &registry
+        ),
+        Some(Action::FavoritesRegisterSlot(2))
+    ));
+}
+
+#[test]
+fn favorite_view_uses_function_keys_for_edit_register_and_delete() {
+    let registry = CommandRegistry::default();
+    for (key, expected) in [
+        (2, "FavoritesEdit"),
+        (3, "FavoritesShowAdd"),
+        (8, "FavoritesDelete"),
+    ] {
+        let action = mapper::map_chord(
+            Screen::Favorites,
+            KeyChord::plain(KeyCode::Function(key)),
+            &registry,
+        );
+        assert_eq!(
+            action.map(|value| format!("{value:?}")),
+            Some(expected.into())
+        );
+    }
+}
+
+#[test]
+fn viewer_space_pages_down_and_shift_space_pages_up() {
+    let registry = CommandRegistry::default();
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Viewer,
+            KeyChord::plain(KeyCode::Character(' ')),
+            &registry
+        ),
+        Some(Action::ViewerPage(1))
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Viewer,
+            KeyChord::shift(KeyCode::Character(' ')),
+            &registry
+        ),
+        Some(Action::ViewerPage(-1))
+    ));
+}
+
+#[test]
+fn viewer_function_keys_open_git_diff_modes() {
+    let registry = CommandRegistry::default();
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Viewer,
+            KeyChord::plain(KeyCode::Function(3)),
+            &registry
+        ),
+        Some(Action::ViewerFunction3)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Viewer,
+            KeyChord::plain(KeyCode::Function(4)),
+            &registry
+        ),
+        Some(Action::ShowViewerGitDiff { side_by_side: true })
+    ));
+}
+
+#[test]
+fn git_status_ctrl_function_keys_expose_amend_rebase_and_fetch() {
+    let registry = CommandRegistry::default();
+    for (number, expected) in [(6, "ShowGitAmend"), (7, "ShowGitBranches"), (8, "GitFetch")] {
+        let action = mapper::map_chord(
+            Screen::GitStatus,
+            KeyChord::control(KeyCode::Function(number)),
+            &registry,
+        );
+        assert_eq!(
+            action.map(|action| format!("{action:?}")),
+            Some(expected.into())
+        );
+    }
+
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::GitStatus,
+            KeyChord::plain(KeyCode::Function(7)),
+            &registry,
+        ),
+        Some(Action::ShowGitCommit)
     ));
 }
 
@@ -221,16 +387,21 @@ fn custom_keymap_updates_display_and_mapping_with_item_fallback() {
 }
 
 #[test]
-fn all_function_keys_exist_once_and_f9_runs_a_shell_command() {
+fn f11_is_unbound_and_f9_runs_a_shell_command() {
     let registry = CommandRegistry::default();
     let functions: Vec<_> = registry.function_commands().collect();
-    assert_eq!(functions.len(), 12);
+    assert_eq!(functions.len(), 11);
     assert_eq!(
         functions
             .iter()
             .filter_map(|command| command.function_key)
             .collect::<HashSet<_>>(),
-        (1..=12).collect()
+        (1..=12).filter(|key| *key != 11).collect()
+    );
+    assert!(
+        registry
+            .action_for(KeyChord::plain(KeyCode::Function(11)))
+            .is_none()
     );
     let f9 = functions
         .iter()

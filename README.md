@@ -19,7 +19,7 @@ your hands on the keyboard.
   `Shift+F8` and confirmation.
 - **Built for real filenames** — Unicode-aware cell-width rendering, directories-first
   sorting, hidden-file filtering, and metadata fallbacks that keep a listing usable.
-- **Configurable** — TOML configuration, themes, user keymaps, saved locations (QCD),
+- **Configurable** — TOML configuration, themes, user keymaps, a built-in Favorites plugin,
   multi-column directory navigation (MCD), and a keyboard-accessible menu.
 - **Git-aware browsing** — Git status decorations and a built-in status view for local
   repositories.
@@ -89,12 +89,29 @@ mdir4 --cwd-file /tmp/mdir4-last-directory /starting/directory
 | `R` / `S` / `Ctrl+S` / `H` | Refresh / change sort key / reverse sort / toggle hidden files |
 | `Tab` | Toggle Short and Long view |
 | `F1`–`F9` | Help, Rename, View, Edit, Copy, Move, Make directory, Delete, Shell command |
-| `F10` / `F11` / `F12` | MCD directory tree / QCD saved locations / Menu |
+| `F10` / `F12` | MCD directory tree / Menu |
+| `Ctrl+F` | Open the Favorites list |
+| `Ctrl+1`–`Ctrl+0` | Go to favorite slots 1–10 |
+| `Ctrl+Shift+1`–`Ctrl+Shift+0` | Register or replace favorite slots 1–10 |
 | `Ctrl+G` | Open Git status for the current local repository |
 | `Ctrl+Q` | Quit with confirmation |
 
+Git operations are also available from the browser and Git Status screen: `Ctrl+F6` amends HEAD
+with the staged changes while keeping the existing commit message, `Ctrl+F7` opens the branch
+target picker for rebase (`F8` confirms the selected target), and `Ctrl+F8` runs
+`git fetch --all --prune`.
+
+Inside Git Status mode, `F8` amends HEAD after confirmation and `F9` opens the stash list.
+
 The footer always shows the active F1–F12 commands. Press `F1` inside the app for the
 context-sensitive command list.
+
+In the Favorites list, use Up/Down and Enter to move immediately, Ctrl+Up/Down to reorder,
+`F2` to edit a path, `F3` to register a path, and `F8` to delete after confirmation. Favorite
+entries are stored by the built-in Favorites plugin.
+
+`F5 Copy` and `F6 Move` open the MCD directory tree. Select the destination directory with
+Enter, or press Esc to cancel without starting the operation.
 
 `F9` accepts a command and runs it through `$SHELL -c` in the directory currently displayed by
 Mdir4. The file-manager screen is suspended while the command runs, so interactive output and
@@ -129,9 +146,8 @@ for every successful build.
 ## Project documentation
 
 - [Development setup](docs/development.md)
-- [Product contract and interaction rules](docs/implementation-plan/01-product-contract.md)
-- [Architecture decisions](docs/architecture)
-- [Documentation map](docs/README.md)
+- [Release candidate notes](docs/releases/v1.0-rc.md)
+- [UI reference materials](docs/ui-reference/README.md)
 
 ## Platform support
 

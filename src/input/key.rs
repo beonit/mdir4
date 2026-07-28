@@ -76,15 +76,18 @@ impl KeyChord {
             KeyCode::Function(number) => format!("F{number}"),
             KeyCode::Tab => "Tab".into(),
         };
+        let mut parts = Vec::with_capacity(4);
         if self.control {
-            format!("Ctrl+{key}")
-        } else if self.alt {
-            format!("Alt+{key}")
-        } else if self.shift {
-            format!("Shift+{key}")
-        } else {
-            key
+            parts.push("Ctrl".to_string());
         }
+        if self.alt {
+            parts.push("Alt".to_string());
+        }
+        if self.shift {
+            parts.push("Shift".to_string());
+        }
+        parts.push(key);
+        parts.join("+")
     }
 }
 
@@ -117,4 +120,23 @@ pub fn normalize(event: KeyEvent) -> Option<KeyChord> {
         alt: event.modifiers.contains(KeyModifiers::ALT),
         shift: event.modifiers.contains(KeyModifiers::SHIFT),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_keeps_all_active_modifiers() {
+        assert_eq!(
+            KeyChord {
+                code: KeyCode::Character('3'),
+                control: true,
+                alt: false,
+                shift: true,
+            }
+            .display(),
+            "Ctrl+Shift+3"
+        );
+    }
 }

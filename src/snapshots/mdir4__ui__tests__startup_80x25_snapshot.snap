@@ -26,4 +26,4 @@ expression: "rendered(&state, 80, 25)"
   FILE021.TXT                     21.0K│                                        
 FILE003.TXT  3.0K FILE                            │ F 28  D 0  S 1/2.0K  -- Free
 F1 Help       F2 Ren        F3 View      F4 Edit      F5 Copy      F6 Move      
-F7 Dir        F8 Del        F9 Shell     F10 MCD      F11 QCD      F12 Menu
+F7 Dir        F8 Del        F9 Shell     F10 MCD      F11 ---      F12 Menu

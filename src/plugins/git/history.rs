@@ -6,6 +6,7 @@ pub struct GitLogEntry {
     pub author: String,
     pub date: String,
     pub subject: String,
+    pub references: String,
 }
 
 pub trait GitHistoryBackend: Send + Sync {
@@ -47,7 +48,7 @@ impl GitHistoryBackend for GitCliHistoryBackend {
             &[
                 "log",
                 "--date=short",
-                "--format=%H%x1f%an%x1f%ad%x1f%s",
+                "--format=%H%x1f%an%x1f%ad%x1f%s%x1f%D",
                 "-n",
                 &limit,
             ],
@@ -61,6 +62,7 @@ impl GitHistoryBackend for GitCliHistoryBackend {
                     author: fields.next()?.to_string(),
                     date: fields.next()?.to_string(),
                     subject: fields.next()?.to_string(),
+                    references: fields.next().unwrap_or_default().to_string(),
                 })
             })
             .collect())

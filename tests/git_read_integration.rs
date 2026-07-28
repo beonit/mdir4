@@ -286,11 +286,13 @@ fn cli_history_backend_lists_commits_and_reads_the_selected_detail() {
     git(temp.path(), &["commit", "-qm", "first subject"]);
     fs::write(temp.path().join("note.txt"), "two\n").unwrap();
     git(temp.path(), &["commit", "-am", "second subject", "-q"]);
+    git(temp.path(), &["branch", "feature/log-label"]);
 
     let backend = GitCliHistoryBackend;
     let entries = backend.log(temp.path(), 10).unwrap();
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].subject, "second subject");
+    assert!(entries[0].references.contains("feature/log-label"));
     let detail = backend.detail(temp.path(), &entries[0].hash).unwrap();
     assert!(detail.contains("second subject"));
     assert!(detail.contains("Test User"));

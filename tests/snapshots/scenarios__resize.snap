@@ -41,4 +41,4 @@ expression: snapshot
                                                                                                                         
                                                                                                                         
 b.txt  2B FILE                                                                     │ 2 File  0 Dir  Sel 0/0B  Free 16.0K
-F1 Help   F2 Ren    F3 View   F4 Edit   F5 Copy   F6 Move   F7 Dir    F8 Del    F9 Shell  F10 MCD   F11 QCD   F12 Menu
+F1 Help   F2 Ren    F3 View   F4 Edit   F5 Copy   F6 Move   F7 Dir    F8 Del    F9 Shell  F10 MCD   F11 ---   F12 Menu

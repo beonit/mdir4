@@ -2,8 +2,9 @@ use std::fs;
 
 use mdir4::config::{
     self,
-    schema::{Config, PluginConfig, QcdEntry, ViewMode},
+    schema::{Config, PluginConfig, ViewMode},
 };
+use mdir4::plugins::favorites::{FAVORITES_PLUGIN_ID, FavoriteEntry, FavoritesState};
 use tempfile::tempdir;
 
 #[test]
@@ -15,11 +16,17 @@ fn config_roundtrip_partial_and_unknown_fields_are_supported() {
         theme: "dark".to_string(),
         ..Config::default()
     };
-    expected.qcd.push(QcdEntry {
+    let favorites = FavoritesState::from_entries(vec![FavoriteEntry {
         label: "Work 한글".to_string(),
         path: temporary.path().to_path_buf(),
         position: 0,
-    });
+    }]);
+    favorites.write_plugin_config(
+        expected
+            .plugins
+            .entry(FAVORITES_PLUGIN_ID.into())
+            .or_default(),
+    );
     config::save_atomic(&path, &expected).unwrap();
     assert_eq!(config::load(&path).unwrap(), expected);
 
@@ -81,7 +88,7 @@ fn missing_last_path_falls_back_to_home_then_current() {
 }
 
 #[test]
-fn m3_fragments_roundtrip_unicode_keymap_history_and_qcd() {
+fn m3_fragments_roundtrip_unicode_keymap_history_and_favorites() {
     let temporary = tempdir().unwrap();
     let path = temporary.path().join("config.toml");
     let mut value = Config::default();
@@ -89,11 +96,12 @@ fn m3_fragments_roundtrip_unicode_keymap_history_and_qcd() {
         .keymap
         .insert("refresh".to_string(), "Ctrl+L".to_string());
     value.mcd_history.push(temporary.path().join("한글"));
-    value.qcd.push(QcdEntry {
+    let favorites = FavoritesState::from_entries(vec![FavoriteEntry {
         label: "즐겨찾기".to_string(),
         path: temporary.path().to_path_buf(),
         position: 0,
-    });
+    }]);
+    favorites.write_plugin_config(value.plugins.entry(FAVORITES_PLUGIN_ID.into()).or_default());
     config::save_atomic(&path, &value).unwrap();
     assert_eq!(config::load(&path).unwrap(), value);
 }

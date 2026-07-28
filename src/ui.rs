@@ -1,5 +1,5 @@
 use crate::{
-    app::command_registry::CommandRegistry,
+    app::command_registry::{CommandId, CommandRegistry},
     app::{AppState, Screen},
     fs::{EntryKind, FileEntry},
     layout::{
@@ -13,7 +13,7 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::Style,
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -28,16 +28,54 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         return;
     }
 
+    let favorite_input = state.screen == Screen::InputDialog
+        && state.input_dialog.as_ref().is_some_and(|dialog| {
+            matches!(
+                dialog.purpose,
+                crate::model::dialog::InputPurpose::FavoritePath
+                    | crate::model::dialog::InputPurpose::FavoriteAdd
+            )
+        });
+    let favorite_confirm = state.screen == Screen::ConfirmDialog
+        && state.confirm_dialog.as_ref().is_some_and(|dialog| {
+            matches!(
+                dialog.operation,
+                crate::model::dialog::ConfirmOperation::FavoriteDelete { .. }
+            )
+        });
+    if state.screen == Screen::Favorites || favorite_input || favorite_confirm {
+        render_favorites_mode(frame, state, metrics);
+        if favorite_input {
+            render_input_dialog(frame, state, metrics.viewport);
+        } else if favorite_confirm {
+            render_confirm_dialog(frame, state, metrics.viewport);
+        }
+        return;
+    }
+
     if state.screen == Screen::Viewer {
-        render_viewer(frame, metrics.viewport, state);
+        render_viewer(frame, metrics, state);
         return;
     }
-    if state.screen == Screen::GitDiff {
-        render_git_diff(frame, metrics.viewport, state);
+    if state.screen == Screen::InputDialog
+        && state.input_dialog.as_ref().is_some_and(|dialog| {
+            dialog.purpose == crate::model::dialog::InputPurpose::SearchViewer
+        })
+    {
+        render_viewer(frame, metrics, state);
+        render_input_dialog(frame, state, metrics.viewport);
         return;
     }
-    if state.screen == Screen::GitLogDetail {
-        render_git_log_detail(frame, metrics.viewport, state);
+    if matches!(
+        state.screen,
+        Screen::GitStatus
+            | Screen::GitLog
+            | Screen::GitLogDetail
+            | Screen::GitBranch
+            | Screen::GitStash
+            | Screen::GitDiff
+    ) {
+        render_git_mode(frame, state, metrics);
         return;
     }
     if state.screen == Screen::Remote {
@@ -56,7 +94,14 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         Screen::QuitConfirm => render_quit_confirmation(frame, metrics.viewport),
         Screen::InputDialog => render_input_dialog(frame, state, metrics.viewport),
         Screen::ConfirmDialog => render_confirm_dialog(frame, state, metrics.viewport),
-        Screen::Viewer | Screen::GitDiff | Screen::GitLogDetail => {
+        Screen::Viewer
+        | Screen::GitStatus
+        | Screen::GitLog
+        | Screen::GitLogDetail
+        | Screen::GitBranch
+        | Screen::GitStash
+        | Screen::GitDiff
+        | Screen::Favorites => {
             unreachable!("full-screen document renders before the main screen")
         }
         Screen::Editor => render_editor(frame, state, metrics.viewport),
@@ -64,13 +109,8 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         Screen::DrivePicker => render_drive_picker(frame, state, metrics.viewport),
         Screen::ConflictDialog => render_conflict_dialog(frame, state, metrics.viewport),
         Screen::Mcd => render_mcd(frame, state, metrics.viewport),
-        Screen::Qcd => render_qcd(frame, state, metrics.viewport),
         Screen::Menu => render_menu(frame, state, metrics.viewport),
         Screen::Settings => render_settings(frame, state, metrics.viewport),
-        Screen::GitStatus => render_git_status(frame, state, metrics.viewport),
-        Screen::GitLog => render_git_log(frame, state, metrics.viewport),
-        Screen::GitBranch => render_git_branches(frame, state, metrics.viewport),
-        Screen::GitStash => render_git_stashes(frame, state, metrics.viewport),
         Screen::Main | Screen::Remote => {}
     }
 }
@@ -181,57 +221,130 @@ fn render_remote(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetric
     );
 }
 
-fn render_git_status(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
-    frame.render_widget(Clear, viewport);
+fn render_git_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
+    frame.render_widget(Clear, metrics.viewport);
+    frame.render_widget(
+        Block::default().style(palette::role(ThemeRole::MainBackground)),
+        metrics.viewport,
+    );
+    let mode = match state.screen {
+        Screen::GitStatus => "STATUS",
+        Screen::GitLog => "LOG",
+        Screen::GitLogDetail => "COMMIT",
+        Screen::GitBranch => "BRANCHES",
+        Screen::GitStash => "STASH",
+        Screen::GitDiff if state.git_diff_side_by_side => "DIFF SIDE-BY-SIDE",
+        Screen::GitDiff => "DIFF UNIFIED",
+        _ => unreachable!("render_git_mode only handles Git screens"),
+    };
+    let path = format!("{}  [GIT: {mode}]", state.current_path.display());
+    frame.render_widget(
+        Paragraph::new(pad_or_truncate(&path, metrics.path_bar.width as usize))
+            .style(palette::role(ThemeRole::PathBar)),
+        metrics.path_bar,
+    );
+    match state.screen {
+        Screen::GitStatus => render_git_status(frame, state, metrics),
+        Screen::GitLog => render_git_log(frame, state, metrics),
+        Screen::GitLogDetail => render_git_log_detail(frame, state, metrics),
+        Screen::GitBranch => render_git_branches(frame, state, metrics),
+        Screen::GitStash => render_git_stashes(frame, state, metrics),
+        Screen::GitDiff => render_git_diff(frame, state, metrics),
+        _ => unreachable!("render_git_mode only handles Git screens"),
+    }
+}
+
+fn render_git_status(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
     let Some(view) = &state.git_status_view else {
+        render_git_body(
+            frame,
+            metrics.list,
+            vec![Line::raw("Loading Git status...")],
+        );
+        render_git_footer(frame, metrics, "Esc Return to files", &git_status_keys());
         return;
     };
-    let rows: Vec<_> = view
+    let capacity = metrics.list.height as usize;
+    let start = view
+        .selected
+        .checked_div(capacity.max(1))
+        .unwrap_or_default()
+        * capacity.max(1);
+    let rows = view
         .rows
         .iter()
         .enumerate()
+        .skip(start)
+        .take(capacity)
         .map(|(index, row)| {
-            Line::raw(format!(
-                "{}{} {} {}",
-                if index == view.selected { ">" } else { " " },
-                if view
-                    .marked
-                    .contains(&row.path.as_path().display().to_string())
-                {
-                    "*"
-                } else {
-                    " "
-                },
-                crate::plugins::git::decoration::prefix(row.status),
-                row.path.as_path().display()
-            ))
+            let marked = view
+                .marked
+                .contains(&row.path.as_path().display().to_string());
+            let selected = index == view.selected;
+            let decoration = crate::plugins::git::decoration::browser_decoration_for_entry(
+                row.path.as_path().display().to_string(),
+                row.status,
+            );
+            let marker = &decoration.text.spans[0];
+            let base = if selected {
+                palette::role(ThemeRole::EntryCursor)
+            } else {
+                palette::role(ThemeRole::MainBackground)
+            };
+            let marker_style = if selected {
+                base
+            } else {
+                palette::decoration(marker.role.as_ref(), base)
+            };
+            let prefix = if marked { "* " } else { "  " };
+            let name = format!(
+                "{}{}",
+                row.path.as_path().display(),
+                row.old_path
+                    .as_ref()
+                    .map(|old| format!("  <- {}", old.as_path().display()))
+                    .unwrap_or_default()
+            );
+            let used = cell_width(prefix) + cell_width(&marker.text);
+            Line::from(vec![
+                Span::styled(prefix.to_string(), base),
+                Span::styled(marker.text.clone(), marker_style),
+                Span::styled(
+                    pad_or_truncate(&name, metrics.list.width as usize - used),
+                    base,
+                ),
+            ])
         })
         .collect();
-    frame.render_widget(
-        Paragraph::new(rows).block(dialog_block(" Git Status ").title_bottom(
-                "F3 Diff  F5 Stage  F6 Unstage  F7 Commit  F8 Stash  F10 Log  F11 Branch  F12 Discard  Space Mark  R Refresh  Esc Close",
-        )),
-        viewport,
+    render_git_body(frame, metrics.list, rows);
+    let selected = view
+        .rows
+        .get(view.selected)
+        .map(|row| row.path.as_path().display().to_string())
+        .unwrap_or_else(|| "No changed files".into());
+    render_git_footer(
+        frame,
+        metrics,
+        &format!("{selected}  │  Ctrl+F6 Amend  Ctrl+F7 Rebase  Ctrl+F8 Fetch  Esc Files"),
+        &git_status_keys(),
     );
 }
 
-fn render_git_stashes(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
-    frame.render_widget(Clear, viewport);
+fn render_git_stashes(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
+    let capacity = metrics.list.height as usize;
+    let start = page_start(state.git_stash_selected, capacity);
     let rows: Vec<_> = state
         .git_stashes
         .iter()
         .enumerate()
+        .skip(start)
+        .take(capacity)
         .map(|(index, entry)| {
-            Line::raw(format!(
-                "{} {}  {}",
-                if index == state.git_stash_selected {
-                    ">"
-                } else {
-                    " "
-                },
-                entry.reference,
-                entry.message
-            ))
+            git_selection_line(
+                format!("  {}  {}", entry.reference, entry.message),
+                metrics.list.width as usize,
+                index == state.git_stash_selected,
+            )
         })
         .collect();
     let content = if rows.is_empty() {
@@ -239,91 +352,396 @@ fn render_git_stashes(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
     } else {
         rows
     };
-    frame.render_widget(
-        Paragraph::new(content).block(
-            dialog_block(" Git Stashes ")
-                .title_bottom("Enter/F5 Apply  F7 Save  F8 Drop  Up/Down Select  Esc Back"),
-        ),
-        viewport,
+    render_git_body(frame, metrics.list, content);
+    render_git_footer(
+        frame,
+        metrics,
+        "Up/Down Select  Enter Apply  Esc Git Status",
+        &git_stash_keys(),
     );
 }
 
-fn render_git_diff(frame: &mut Frame<'_>, viewport: Rect, state: &AppState) {
-    frame.render_widget(Clear, viewport);
+fn render_git_diff(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
     let Some((path, viewer)) = &state.git_diff else {
         return;
     };
-    render_document_viewer(
+    if state.git_diff_side_by_side
+        && let crate::model::viewer::ViewerState::Ready(document) = viewer
+    {
+        let rows = side_by_side_diff_rows(document, metrics.list.width as usize);
+        let top = document.top_line.min(rows.len().saturating_sub(1));
+        let total = rows.len();
+        render_git_body(
+            frame,
+            metrics.list,
+            rows.into_iter()
+                .skip(top)
+                .take(metrics.list.height as usize)
+                .collect(),
+        );
+        render_git_footer(
+            frame,
+            metrics,
+            &format!(
+                "{}  │  Row {}/{}  Left: before  Right: after  Esc Git Status",
+                path.display(),
+                top.saturating_add(1).min(total),
+                total
+            ),
+            &git_diff_keys(true),
+        );
+        return;
+    }
+    render_mode_document(
         frame,
-        viewport,
+        metrics,
         viewer,
-        &format!(" Git Diff: {} ", path.display()),
-        "Esc Back  Up/Down Scroll  PgUp/PgDn Page  Ctrl+F Find  F3 Next",
+        &format!(
+            "{}  │  Up/Down Scroll  PgUp/PgDn Page  Ctrl+F Find  Esc Git Status",
+            path.display()
+        ),
+        &git_diff_keys(false),
     );
 }
 
-fn render_git_log(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
-    frame.render_widget(Clear, viewport);
+fn side_by_side_diff_rows(
+    document: &crate::model::viewer::ViewerDocument,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let content_width = width.saturating_sub(1);
+    let left_width = content_width / 2;
+    let right_width = content_width.saturating_sub(left_width);
+    let source = (0..document.lines.len())
+        .map(|index| document.line(index).to_string())
+        .collect::<Vec<_>>();
+    let mut rows = Vec::new();
+    let mut index = 0;
+    while index < source.len() {
+        if is_deleted_diff_line(&source[index]) {
+            let deleted_start = index;
+            while index < source.len() && is_deleted_diff_line(&source[index]) {
+                index += 1;
+            }
+            let added_start = index;
+            while index < source.len() && is_added_diff_line(&source[index]) {
+                index += 1;
+            }
+            let deleted = &source[deleted_start..added_start];
+            let added = &source[added_start..index];
+            for pair in 0..deleted.len().max(added.len()) {
+                rows.push(side_by_side_line(
+                    deleted.get(pair).map(|line| &line[1..]),
+                    added.get(pair).map(|line| &line[1..]),
+                    left_width,
+                    right_width,
+                    true,
+                ));
+            }
+            continue;
+        }
+        if is_added_diff_line(&source[index]) {
+            rows.push(side_by_side_line(
+                None,
+                Some(&source[index][1..]),
+                left_width,
+                right_width,
+                true,
+            ));
+        } else if source[index].starts_with(' ') {
+            rows.push(side_by_side_line(
+                Some(&source[index][1..]),
+                Some(&source[index][1..]),
+                left_width,
+                right_width,
+                false,
+            ));
+        } else {
+            rows.push(Line::from(Span::styled(
+                pad_or_truncate(&source[index], width),
+                palette::role(ThemeRole::MainBackground),
+            )));
+        }
+        index += 1;
+    }
+    rows
+}
+
+fn is_deleted_diff_line(line: &str) -> bool {
+    line.starts_with('-') && !line.starts_with("--- ")
+}
+
+fn is_added_diff_line(line: &str) -> bool {
+    line.starts_with('+') && !line.starts_with("+++ ")
+}
+
+fn side_by_side_line(
+    before: Option<&str>,
+    after: Option<&str>,
+    left_width: usize,
+    right_width: usize,
+    changed: bool,
+) -> Line<'static> {
+    let background = palette::role(ThemeRole::MainBackground);
+    let before_style = if changed && before.is_some() {
+        palette::role(ThemeRole::GitDeleted)
+    } else {
+        background
+    };
+    let after_style = if changed && after.is_some() {
+        palette::role(ThemeRole::GitAdded)
+    } else {
+        background
+    };
+    Line::from(vec![
+        Span::styled(
+            pad_or_truncate(before.unwrap_or_default(), left_width),
+            before_style,
+        ),
+        Span::styled("│", palette::role(ThemeRole::ColumnSeparator)),
+        Span::styled(
+            pad_or_truncate(after.unwrap_or_default(), right_width),
+            after_style,
+        ),
+    ])
+}
+
+fn render_git_log(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
+    let capacity = metrics.list.height as usize;
+    let start = page_start(state.git_log_selected, capacity);
     let rows: Vec<_> = state
         .git_log
         .iter()
         .enumerate()
+        .skip(start)
+        .take(capacity)
         .map(|(index, entry)| {
-            Line::raw(format!(
-                "{} {}  {}  {}  {}",
-                if index == state.git_log_selected {
-                    ">"
-                } else {
-                    " "
-                },
-                &entry.hash[..entry.hash.len().min(10)],
-                entry.date,
-                entry.author,
-                entry.subject
-            ))
+            let references = if entry.references.is_empty() {
+                String::new()
+            } else {
+                format!("  [{}]", entry.references)
+            };
+            git_selection_line(
+                format!(
+                    "  {}  {}  {}  {}{}",
+                    &entry.hash[..entry.hash.len().min(10)],
+                    entry.date,
+                    entry.author,
+                    entry.subject,
+                    references,
+                ),
+                metrics.list.width as usize,
+                index == state.git_log_selected,
+            )
         })
         .collect();
-    frame.render_widget(
-        Paragraph::new(rows).block(
-            dialog_block(" Git Log ").title_bottom("Up/Down Move  Enter/F3 Detail  Esc Back"),
-        ),
-        viewport,
+    render_git_body(frame, metrics.list, rows);
+    render_git_footer(
+        frame,
+        metrics,
+        "Up/Down Select  Enter Detail  Esc Git Status",
+        &git_log_keys(),
     );
 }
 
-fn render_git_log_detail(frame: &mut Frame<'_>, viewport: Rect, state: &AppState) {
-    frame.render_widget(Clear, viewport);
+fn render_git_log_detail(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
     let Some(detail) = &state.git_log_detail else {
         return;
     };
-    render_document_viewer(frame, viewport, detail, " Git Commit Detail ", "Esc Back");
+    render_mode_document(
+        frame,
+        metrics,
+        detail,
+        "Up/Down Scroll  Esc Git Log",
+        &git_log_keys(),
+    );
 }
 
-fn render_git_branches(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
-    frame.render_widget(Clear, viewport);
+fn render_git_branches(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
+    let capacity = metrics.list.height as usize;
+    let start = page_start(state.git_branch_selected, capacity);
     let rows: Vec<_> = state
         .git_branches
         .iter()
         .enumerate()
+        .skip(start)
+        .take(capacity)
         .map(|(index, branch)| {
-            Line::raw(format!(
-                "{} {} {}",
-                if index == state.git_branch_selected {
-                    ">"
-                } else {
-                    " "
-                },
-                if branch.current { "*" } else { " " },
-                branch.name
-            ))
+            git_selection_line(
+                format!(
+                    "  {} {}",
+                    if branch.current { "*" } else { " " },
+                    branch.name
+                ),
+                metrics.list.width as usize,
+                index == state.git_branch_selected,
+            )
         })
         .collect();
-    frame.render_widget(
-        Paragraph::new(rows).block(dialog_block(" Git Branches ").title_bottom(
-            "Up/Down Target  Enter Switch  F7 Create  F8 Rebase onto Target  Esc Back",
-        )),
-        viewport,
+    render_git_body(frame, metrics.list, rows);
+    render_git_footer(
+        frame,
+        metrics,
+        "Up/Down Target  Enter Switch  Esc Git Status",
+        &git_branch_keys(),
     );
+}
+
+fn render_git_body(frame: &mut Frame<'_>, area: Rect, rows: Vec<Line<'_>>) {
+    frame.render_widget(
+        Paragraph::new(rows).style(palette::role(ThemeRole::MainBackground)),
+        area,
+    );
+}
+
+fn page_start(selected: usize, capacity: usize) -> usize {
+    selected.checked_div(capacity.max(1)).unwrap_or_default() * capacity.max(1)
+}
+
+fn git_selection_line(text: String, width: usize, selected: bool) -> Line<'static> {
+    let style = if selected {
+        palette::role(ThemeRole::EntryCursor)
+    } else {
+        palette::role(ThemeRole::MainBackground)
+    };
+    Line::from(Span::styled(pad_or_truncate(&text, width), style))
+}
+
+fn render_mode_document(
+    frame: &mut Frame<'_>,
+    metrics: &LayoutMetrics,
+    viewer: &crate::model::viewer::ViewerState,
+    help: &str,
+    keys: &[(u8, &str)],
+) {
+    use crate::model::viewer::ViewerState;
+    let body_height = metrics.list.height as usize;
+    let lines = match viewer {
+        ViewerState::Loading { .. } => vec![Line::raw("Loading...")],
+        ViewerState::Binary => vec![Line::raw("Binary preview is not available.")],
+        ViewerState::TooLarge => vec![Line::raw("Content is too large to view (maximum 32 MiB).")],
+        ViewerState::Error(error) => vec![Line::raw(error)],
+        ViewerState::Ready(document) => (document.top_line..document.top_line + body_height)
+            .map(|line| {
+                Line::raw(pad_or_truncate(
+                    document.line(line),
+                    metrics.list.width as usize,
+                ))
+            })
+            .collect(),
+    };
+    render_git_body(frame, metrics.list, lines);
+    let status = match viewer {
+        ViewerState::Ready(document) => format!(
+            "Line {}/{}  │  {help}",
+            document
+                .top_line
+                .saturating_add(1)
+                .min(document.lines.len()),
+            document.lines.len()
+        ),
+        _ => help.to_string(),
+    };
+    render_git_footer(frame, metrics, &status, keys);
+}
+
+fn render_git_footer(
+    frame: &mut Frame<'_>,
+    metrics: &LayoutMetrics,
+    status: &str,
+    keys: &[(u8, &str)],
+) {
+    render_status_line(
+        frame,
+        status,
+        metrics.item_detail,
+        palette::role(ThemeRole::StatusBar),
+    );
+    render_function_bar(frame, metrics.function_bar, keys);
+}
+
+fn git_status_keys() -> [(u8, &'static str); 12] {
+    [
+        (1, "Help"),
+        (2, "---"),
+        (3, "Diff"),
+        (4, "---"),
+        (5, "Stage"),
+        (6, "Unstage"),
+        (7, "Commit"),
+        (8, "Amend"),
+        (9, "Stash"),
+        (10, "Log"),
+        (11, "Branch"),
+        (12, "Discard"),
+    ]
+}
+
+fn git_log_keys() -> [(u8, &'static str); 12] {
+    [
+        (1, "Help"),
+        (2, "---"),
+        (3, "Detail"),
+        (4, "---"),
+        (5, "---"),
+        (6, "---"),
+        (7, "---"),
+        (8, "---"),
+        (9, "---"),
+        (10, "---"),
+        (11, "---"),
+        (12, "---"),
+    ]
+}
+
+fn git_branch_keys() -> [(u8, &'static str); 12] {
+    [
+        (1, "Help"),
+        (2, "---"),
+        (3, "---"),
+        (4, "---"),
+        (5, "---"),
+        (6, "---"),
+        (7, "New"),
+        (8, "Rebase"),
+        (9, "---"),
+        (10, "---"),
+        (11, "---"),
+        (12, "---"),
+    ]
+}
+
+fn git_stash_keys() -> [(u8, &'static str); 12] {
+    [
+        (1, "Help"),
+        (2, "---"),
+        (3, "---"),
+        (4, "---"),
+        (5, "Apply"),
+        (6, "---"),
+        (7, "Save"),
+        (8, "Drop"),
+        (9, "---"),
+        (10, "---"),
+        (11, "---"),
+        (12, "---"),
+    ]
+}
+
+fn git_diff_keys(side_by_side: bool) -> [(u8, &'static str); 12] {
+    [
+        (1, "Help"),
+        (2, "---"),
+        (3, "Next"),
+        (4, if side_by_side { "Uni" } else { "Side" }),
+        (5, "---"),
+        (6, "---"),
+        (7, "---"),
+        (8, "---"),
+        (9, "---"),
+        (10, "---"),
+        (11, "---"),
+        (12, "---"),
+    ]
 }
 
 fn render_menu(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
@@ -336,7 +754,7 @@ fn render_menu(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
             "Sort Direction",
             "Hidden Files",
         ],
-        &["Make Directory", "MCD Tree", "QCD Favorites"],
+        &["Make Directory", "MCD Tree"],
         &["View File", "Edit File", "Drives"],
         &["Settings"],
         &["Quit Mdir4"],
@@ -435,45 +853,84 @@ fn render_settings(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
     );
 }
 
-fn render_qcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
-    let area = centered_rect(
-        viewport.width.saturating_sub(8).min(72),
-        viewport.height.saturating_sub(6).min(20),
-        viewport,
+fn render_favorites_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
+    frame.render_widget(Clear, metrics.viewport);
+    frame.render_widget(
+        Block::default().style(palette::role(ThemeRole::MainBackground)),
+        metrics.viewport,
     );
-    frame.render_widget(Clear, area);
+
+    let title = format!("{}  [FAVORITES]", state.current_path.display());
+    frame.render_widget(
+        Paragraph::new(pad_or_truncate(&title, metrics.path_bar.width as usize))
+            .style(palette::role(ThemeRole::PathBar)),
+        metrics.path_bar,
+    );
+
+    let capacity = metrics.list.height as usize;
+    let start = page_start(state.favorites.selected(), capacity);
     let mut lines: Vec<Line<'_>> = state
-        .qcd
+        .favorites
+        .entries()
         .iter()
         .enumerate()
+        .skip(start)
+        .take(capacity)
         .map(|(index, entry)| {
-            Line::raw(format!(
-                "{} {:>2}. {:<18} {}",
-                if index == state.selected_qcd {
-                    ">"
-                } else {
-                    " "
-                },
-                index + 1,
-                entry.label,
-                entry.path.display()
-            ))
+            git_selection_line(
+                format!(
+                    "  {:>2}. {:<18} {}",
+                    entry.position + 1,
+                    entry.label,
+                    entry.path.display()
+                ),
+                metrics.list.width as usize,
+                index == state.favorites.selected(),
+            )
         })
         .collect();
     if lines.is_empty() {
         lines.push(Line::raw("(no favorite directories)"));
     }
-    lines.push(Line::raw(
-        "Insert Add  F2 Edit  D Delete  Ctrl+Up/Down Reorder  Enter Open  Esc Close",
-    ));
-    frame.render_widget(
-        Paragraph::new(lines).block(dialog_block(" QCD Favorites ")),
-        area,
+    render_git_body(frame, metrics.list, lines);
+
+    let selected = state
+        .favorites
+        .selected_entry()
+        .map(|entry| entry.path.display().to_string())
+        .unwrap_or_else(|| "No favorite directories".into());
+    render_git_footer(
+        frame,
+        metrics,
+        &format!("{selected}  │  Up/Down Select  Enter Open  Ctrl+Up/Down Reorder  Esc Files"),
+        &favorites_keys(),
     );
+}
+
+fn favorites_keys() -> [(u8, &'static str); 12] {
+    [
+        (1, "---"),
+        (2, "Edit"),
+        (3, "Add"),
+        (4, "---"),
+        (5, "---"),
+        (6, "---"),
+        (7, "---"),
+        (8, "Del"),
+        (9, "---"),
+        (10, "---"),
+        (11, "---"),
+        (12, "---"),
+    ]
 }
 
 fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
     let Some(tree) = &state.mcd else { return };
+    let title = match state.mcd_operation {
+        Some(crate::app::McdOperation::Copy) => "Mdir4 Copy Destination",
+        Some(crate::app::McdOperation::Move) => "Mdir4 Move Destination",
+        None => "Mdir4 Change Directory",
+    };
     frame.render_widget(Clear, viewport);
     frame.render_widget(
         Block::default().style(palette::role(ThemeRole::McdBackground)),
@@ -518,7 +975,7 @@ fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         1,
     );
     frame.render_widget(
-        Paragraph::new("Mdir4 Change Directory")
+        Paragraph::new(title)
             .alignment(Alignment::Center)
             .style(palette::role(ThemeRole::McdBackground)),
         header,
@@ -659,10 +1116,10 @@ fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
             path_bar,
         );
     }
-    render_mcd_function_bar(frame, footer);
+    render_mcd_function_bar(frame, footer, state.mcd_operation.is_some());
 }
 
-fn render_mcd_function_bar(frame: &mut Frame<'_>, area: Rect) {
+fn render_mcd_function_bar(frame: &mut Frame<'_>, area: Rect, selecting_destination: bool) {
     let left = [(1, "Help"), (2, "Rescan"), (3, "Drives")];
     let mut spans = Vec::new();
     let mut used = 0usize;
@@ -673,7 +1130,11 @@ fn render_mcd_function_bar(frame: &mut Frame<'_>, area: Rect) {
         spans.push(Span::styled(key, palette::role(ThemeRole::FunctionKey)));
         spans.push(Span::styled(label, palette::role(ThemeRole::FunctionLabel)));
     }
-    let right = "Enter Open  Esc Cancel";
+    let right = if selecting_destination {
+        "Enter Select  Esc Cancel"
+    } else {
+        "Enter Open  Esc Cancel"
+    };
     let gap = area
         .width
         .saturating_sub((used + crate::layout::text::cell_width(right)) as u16)
@@ -825,79 +1286,51 @@ fn render_confirm_dialog(frame: &mut Frame<'_>, state: &AppState, viewport: Rect
     );
 }
 
-fn render_viewer(frame: &mut Frame<'_>, viewport: Rect, state: &AppState) {
-    let area = viewport;
-    frame.render_widget(Clear, area);
+fn render_viewer(frame: &mut Frame<'_>, metrics: &LayoutMetrics, state: &AppState) {
+    frame.render_widget(Clear, metrics.viewport);
+    frame.render_widget(
+        Block::default().style(palette::role(ThemeRole::MainBackground)),
+        metrics.viewport,
+    );
     let (path, viewer) = match &state.viewer {
         Some(value) => value,
         None => return,
     };
-    render_document_viewer(
+    let title = format!("{}  [VIEW]", path.display());
+    frame.render_widget(
+        Paragraph::new(pad_or_truncate(&title, metrics.path_bar.width as usize))
+            .style(palette::role(ThemeRole::PathBar)),
+        metrics.path_bar,
+    );
+    let git_modified = state.viewer_is_git_modified();
+    render_mode_document(
         frame,
-        area,
+        metrics,
         viewer,
-        &format!(" View: {} ", path.display()),
-        "Esc Close  Up/Down Scroll  PgUp/PgDn Page  Ctrl+F Find  F3 Next",
+        if git_modified {
+            "Arrows Scroll  F3 Diff  F4 Side-by-Side  Ctrl+F Find  Esc Files"
+        } else {
+            "Arrows Scroll  Space/PgDn Down  Shift+Space/PgUp Up  Ctrl+F Find  Esc Files"
+        },
+        &viewer_keys(git_modified),
     );
 }
 
-fn render_document_viewer(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    viewer: &crate::model::viewer::ViewerState,
-    title: &str,
-    help: &str,
-) {
-    use crate::model::viewer::ViewerState;
-    let body_height = area.height.saturating_sub(3) as usize;
-    let lines: Vec<Line<'_>> = match viewer {
-        ViewerState::Loading { .. } => vec![Line::raw("Loading...")],
-        ViewerState::Binary => vec![Line::raw("Binary file preview is not available.")],
-        ViewerState::TooLarge => vec![Line::raw("File is too large to view (maximum 32 MiB).")],
-        ViewerState::Error(error) => vec![Line::raw(error)],
-        ViewerState::Ready(document) => (document.top_line..document.top_line + body_height)
-            .map(|line| {
-                Line::raw(pad_or_truncate(
-                    document.line(line),
-                    area.width.saturating_sub(2) as usize,
-                ))
-            })
-            .collect(),
-    };
-    frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::default()
-                .title(title)
-                .borders(Borders::ALL)
-                .border_style(palette::role(ThemeRole::ViewerBorder))
-                .style(palette::role(ThemeRole::Viewer)),
-        ),
-        area,
-    );
-    let status = match viewer {
-        ViewerState::Ready(document) => format!(
-            " Line {}/{}  Col 1    {help}",
-            document
-                .top_line
-                .saturating_add(1)
-                .min(document.lines.len()),
-            document.lines.len()
-        ),
-        _ => format!(" {help}"),
-    };
-    frame.render_widget(
-        Paragraph::new(pad_or_truncate(
-            &status,
-            area.width.saturating_sub(2) as usize,
-        ))
-        .style(palette::role(ThemeRole::StatusBar)),
-        Rect::new(
-            area.x.saturating_add(1),
-            area.bottom().saturating_sub(2),
-            area.width.saturating_sub(2),
-            1,
-        ),
-    );
+fn viewer_keys(git_modified: bool) -> [(u8, &'static str); 12] {
+    [
+        (1, "---"),
+        (2, "---"),
+        (3, if git_modified { "Diff" } else { "Next" }),
+        (4, if git_modified { "Side" } else { "---" }),
+        (5, "---"),
+        (6, "---"),
+        (7, "---"),
+        (8, "---"),
+        (9, "---"),
+        (10, "---"),
+        (11, "---"),
+        (12, "---"),
+    ]
 }
 
 fn render_editor(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
@@ -1066,11 +1499,13 @@ fn render_main(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics)
         palette::role(ThemeRole::StatusBar),
     );
 
-    let function_keys = state
+    let mut function_keys = state
         .registry
         .function_commands()
         .filter_map(|command| command.function_key.map(|key| (key, command.label)))
         .collect::<Vec<_>>();
+    function_keys.push((11, "---"));
+    function_keys.sort_by_key(|(key, _)| *key);
     render_function_bar(frame, metrics.function_bar, &function_keys);
 }
 
@@ -1271,37 +1706,151 @@ fn render_help(
     registry: &CommandRegistry,
     plugins: &[crate::app::command_registry::PluginCommandHint],
 ) {
-    let width = viewport.width.saturating_sub(8).min(64);
-    let height = viewport.height.saturating_sub(4).min(17);
-    let area = centered_rect(width, height, viewport);
-    frame.render_widget(Clear, area);
-    let mut help = vec![Line::raw("Active commands")];
-    help.extend(registry.active_help_lines().into_iter().map(Line::raw));
-    help.extend(plugins.iter().map(|command| {
-        let key = command
-            .key
-            .map_or("(no key)".to_string(), |key| key.display());
-        let suffix = match &command.availability {
-            crate::plugins::api::CommandAvailability::Enabled => String::new(),
-            crate::plugins::api::CommandAvailability::Disabled { reason } => {
-                format!(" [disabled: {reason}]")
-            }
-        };
-        Line::raw(format!("{key:<11} {}{suffix}", command.label))
-    }));
-    help.push(Line::raw("Esc         Close this window"));
+    frame.render_widget(Clear, viewport);
     frame.render_widget(
-        Paragraph::new(help)
-            .block(
-                Block::default()
-                    .title(" Mdir4 Help ")
-                    .borders(Borders::ALL)
-                    .border_style(palette::role(ThemeRole::DialogBorder))
-                    .style(palette::role(ThemeRole::Dialog)),
-            )
-            .wrap(Wrap { trim: false }),
-        area,
+        Block::default()
+            .title(" Mdir4 Help ")
+            .borders(Borders::ALL)
+            .border_style(palette::role(ThemeRole::DialogBorder))
+            .style(palette::role(ThemeRole::Dialog)),
+        viewport,
     );
+
+    let inner = Rect::new(
+        viewport.x.saturating_add(1),
+        viewport.y.saturating_add(1),
+        viewport.width.saturating_sub(2),
+        viewport.height.saturating_sub(2),
+    );
+    let column_width = inner.width / 3;
+    let areas = [
+        Rect::new(inner.x, inner.y, column_width, inner.height),
+        Rect::new(
+            inner.x.saturating_add(column_width),
+            inner.y,
+            column_width,
+            inner.height,
+        ),
+        Rect::new(
+            inner.x.saturating_add(column_width.saturating_mul(2)),
+            inner.y,
+            inner.width.saturating_sub(column_width.saturating_mul(2)),
+            inner.height,
+        ),
+    ];
+
+    let mut functions = vec!["F1-F12 Commands".to_string()];
+    functions.extend(
+        registry
+            .function_commands()
+            .map(|command| format!("{:<6} {}", command.key.display(), command.label)),
+    );
+    functions.extend([
+        String::new(),
+        "Navigation / Global".to_string(),
+        "Arrows/Pg/Home/End Browse".to_string(),
+        "Enter/Backspace Open/Parent".to_string(),
+        "Space/Ins/Ctrl+A Mark".to_string(),
+        "Esc Clear Selection".to_string(),
+        "R Refresh  S/Ctrl+S Sort".to_string(),
+        "H Hidden  Tab View".to_string(),
+        "Alt+O Settings  Ctrl+Q Quit".to_string(),
+        "Esc or F1 Close Help".to_string(),
+    ]);
+
+    let mut git_shortcuts = vec!["Ctrl+F1-F12 Git Commands".to_string()];
+    git_shortcuts.extend(
+        registry
+            .commands()
+            .iter()
+            .filter(|command| {
+                command.key.control
+                    && matches!(command.key.code, crate::input::key::KeyCode::Function(_))
+            })
+            .map(|command| {
+                let label = match command.id {
+                    CommandId::GitShortcutStatus => "Git Status",
+                    CommandId::GitShortcutDiff => "Git Diff",
+                    CommandId::GitShortcutAdd => "Git Add",
+                    CommandId::GitShortcutUnstage => "Git Unstage",
+                    CommandId::GitShortcutCommit => "Git Commit",
+                    CommandId::GitShortcutAmend => "Git Amend",
+                    CommandId::GitShortcutRebase => "Git Rebase",
+                    CommandId::GitShortcutFetch => "Git Fetch",
+                    CommandId::GitShortcutLog => "Git Log",
+                    CommandId::GitShortcutStash => "Git Stash",
+                    CommandId::GitShortcutBranches => "Git Branches",
+                    CommandId::GitShortcutRefresh => "Git Refresh",
+                    _ => command.label,
+                };
+                format!("{} {label}", command.key.display())
+            }),
+    );
+    git_shortcuts.extend([
+        String::new(),
+        "Git File Markers".to_string(),
+        "M Modified   A Added".to_string(),
+        "D Deleted    R Renamed".to_string(),
+        "? Untracked  ! Conflict".to_string(),
+    ]);
+    if !plugins.is_empty() {
+        git_shortcuts.extend([String::new(), "Plugin Commands".to_string()]);
+        git_shortcuts.extend(plugins.iter().take(2).map(|command| {
+            let key = command
+                .key
+                .map_or("(no key)".to_string(), |key| key.display());
+            format!("{key} {}", command.label)
+        }));
+    }
+
+    let git_mode = vec![
+        "Git Status Mode".to_string(),
+        "Ctrl+G / Ctrl+F1 Open".to_string(),
+        "Arrows/Pg/Home/End Select".to_string(),
+        "Space Mark   R Refresh".to_string(),
+        "Enter/F3 Diff".to_string(),
+        "F5 Stage     F6 Unstage".to_string(),
+        "F7 Commit    F8 Amend".to_string(),
+        "F9 Stash     F10 Log".to_string(),
+        "F11 Branch   F12 Discard".to_string(),
+        String::new(),
+        "Git Subviews".to_string(),
+        "Diff: Ctrl+F Find, F3 Next".to_string(),
+        "Stash: F5 Apply, F7 Save".to_string(),
+        "       F8 Drop".to_string(),
+        "Branch: Enter Switch".to_string(),
+        "        F7 New, F8 Rebase".to_string(),
+        "Log: Enter/F3 Detail".to_string(),
+        String::new(),
+        "Ctrl+F6 Amend HEAD".to_string(),
+        "  staged changes, keep msg".to_string(),
+        "Ctrl+F7 Choose rebase target".to_string(),
+        "Ctrl+F8 Fetch all / prune".to_string(),
+    ];
+
+    for (index, (area, lines)) in areas
+        .into_iter()
+        .zip([functions, git_shortcuts, git_mode])
+        .enumerate()
+    {
+        let width = area.width.saturating_sub(1) as usize;
+        let lines = lines
+            .into_iter()
+            .take(area.height as usize)
+            .map(|line| Line::raw(pad_or_truncate(&line, width)))
+            .collect::<Vec<_>>();
+        let block = if index < 2 {
+            Block::default().borders(Borders::RIGHT)
+        } else {
+            Block::default()
+        };
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(block)
+                .style(palette::role(ThemeRole::Dialog)),
+            area,
+        );
+    }
 }
 
 fn render_quit_confirmation(frame: &mut Frame<'_>, viewport: Rect) {
@@ -1472,8 +2021,8 @@ mod tests {
             long_view: false,
             theme: crate::theme::catalog::Theme::classic(),
             mcd: None,
-            qcd: Vec::new(),
-            selected_qcd: 0,
+            mcd_operation: None,
+            favorites: crate::plugins::favorites::FavoritesState::default(),
             menu_category: 0,
             menu_item: 0,
             settings_cursor: 0,
@@ -1484,8 +2033,11 @@ mod tests {
             plugin_status: Vec::new(),
             plugin_commands: Vec::new(),
             plugin_decorations: std::collections::BTreeMap::new(),
+            git_modified_paths: std::collections::HashSet::new(),
             git_status_view: None,
             git_diff: None,
+            git_diff_side_by_side: false,
+            git_diff_origin: crate::app::GitDiffOrigin::default(),
             git_log: Vec::new(),
             git_log_selected: 0,
             git_log_detail: None,
@@ -1562,8 +2114,8 @@ mod tests {
     }
 
     #[test]
-    fn git_status_renders_as_a_full_screen_plugin_owned_view() {
-        let mut state = state_with(Vec::new(), 80, 25);
+    fn git_status_replaces_the_file_list_inside_the_main_screen_layout() {
+        let mut state = state_with(vec![entry("ordinary.txt", EntryKind::File, 1)], 80, 25);
         state.screen = Screen::GitStatus;
         state.git_status_view = Some(crate::plugins::git::status_view::GitStatusViewState {
             rows: vec![crate::plugins::git::model::GitStatusRow {
@@ -1575,9 +2127,53 @@ mod tests {
             marked: std::collections::BTreeSet::new(),
         });
         let output = rendered(&state, 80, 25);
-        assert!(output.contains("Git Status"));
-        assert!(output.contains("M  changed.txt"));
-        assert!(!output.contains("Enter Open"));
+        assert!(output.contains("[GIT: STATUS]"));
+        assert!(output.contains("M changed.txt"));
+        assert!(output.contains("F3 Diff"));
+        assert!(output.contains("F8 Amend"));
+        assert!(output.contains("F9 Stash"));
+        assert!(output.contains("F12 Discard"));
+        assert!(!output.contains("ordinary.txt"));
+        assert!(!output.contains("┌ Git Status"));
+    }
+
+    #[test]
+    fn git_log_renders_branch_names_after_the_commit_subject() {
+        let mut state = state_with(Vec::new(), 100, 25);
+        state.screen = Screen::GitLog;
+        state.git_log = vec![crate::plugins::git::history::GitLogEntry {
+            hash: "0123456789abcdef".into(),
+            author: "Test".into(),
+            date: "2026-07-27".into(),
+            subject: "Add feature".into(),
+            references: "HEAD -> main, feature/demo".into(),
+        }];
+
+        let output = rendered(&state, 100, 25);
+        assert!(output.contains("[GIT: LOG]"));
+        assert!(output.contains("Add feature  [HEAD -> main, feature/demo]"));
+        assert!(output.contains("F3 Detail"));
+    }
+
+    #[test]
+    fn git_diff_f4_renders_before_and_after_side_by_side() {
+        let mut state = state_with(Vec::new(), 100, 25);
+        state.screen = Screen::GitDiff;
+        state.git_diff_side_by_side = true;
+        state.git_diff = Some((
+            PathBuf::from("src/main.rs"),
+            crate::model::viewer::ViewerDocument::decode(
+                b"diff --git a/src/main.rs b/src/main.rs\n@@ -1 +1 @@\n-old value\n+new value\n"
+                    .to_vec(),
+            ),
+        ));
+
+        let output = rendered(&state, 100, 25);
+        assert!(output.contains("[GIT: DIFF SIDE-BY-SIDE]"));
+        assert!(output.contains("old value"));
+        assert!(output.contains("new value"));
+        assert!(output.contains("F4 Uni"));
+        assert!(output.contains("Left: before  Right: after"));
     }
 
     fn entry(name: &str, kind: EntryKind, size: u64) -> FileEntry {
@@ -1634,18 +2230,61 @@ mod tests {
     }
 
     #[test]
-    fn viewer_uses_the_entire_viewport_without_rendering_the_main_screen() {
+    fn viewer_replaces_the_file_list_inside_the_main_screen_layout() {
         let mut state = state_with(vec![entry("stale-main.txt", EntryKind::File, 42)], 80, 25);
         let viewer = crate::model::viewer::ViewerDocument::decode(b"viewer body".to_vec());
         state.viewer = Some((PathBuf::from("/work/viewer.txt"), viewer));
         state.screen = Screen::Viewer;
 
         let output = rendered(&state, 80, 25);
-        assert!(output.starts_with("┌ View: /work/viewer.txt"));
+        assert!(output.contains("/work/viewer.txt  [VIEW]"));
         assert!(output.contains("viewer body"));
-        assert!(output.contains("Esc Close"));
+        assert!(output.contains("Ctrl+F Find"));
+        assert!(output.contains("F3 Next"));
         assert!(!output.contains("stale-main.txt"));
         assert!(!output.contains("Files 1"));
+        assert!(!output.contains("┌ View:"));
+    }
+
+    #[test]
+    fn modified_file_viewer_shows_diff_function_keys() {
+        let mut state = state_with(vec![entry("viewer.txt", EntryKind::File, 42)], 80, 25);
+        let path = PathBuf::from("/work/viewer.txt");
+        state.viewer = Some((
+            path.clone(),
+            crate::model::viewer::ViewerDocument::decode(b"viewer body".to_vec()),
+        ));
+        state.git_modified_paths.insert(path);
+        state.screen = Screen::Viewer;
+
+        let output = rendered(&state, 80, 25);
+        assert!(output.contains("F3 Diff"));
+        assert!(output.contains("F4 Side"));
+        assert!(output.contains("F4 Side-by-Side"));
+        assert!(!output.contains("F3 Next"));
+    }
+
+    #[test]
+    fn viewer_search_dialog_keeps_the_view_mode_underneath() {
+        let mut state = state_with(vec![entry("stale-main.txt", EntryKind::File, 42)], 80, 25);
+        state.viewer = Some((
+            PathBuf::from("/work/viewer.txt"),
+            crate::model::viewer::ViewerDocument::decode(b"viewer body".to_vec()),
+        ));
+        state.input_dialog = Some(crate::model::dialog::InputDialog::new(
+            "Find",
+            "Search text",
+            "",
+            crate::model::dialog::InputPurpose::SearchViewer,
+            None,
+        ));
+        state.screen = Screen::InputDialog;
+
+        let output = rendered(&state, 80, 25);
+        assert!(output.contains("[VIEW]"));
+        assert!(output.contains("viewer body"));
+        assert!(output.contains("Search text"));
+        assert!(!output.contains("stale-main.txt"));
     }
 
     #[test]
@@ -1688,8 +2327,8 @@ mod tests {
             long_view: false,
             theme: crate::theme::catalog::Theme::classic(),
             mcd: None,
-            qcd: Vec::new(),
-            selected_qcd: 0,
+            mcd_operation: None,
+            favorites: crate::plugins::favorites::FavoritesState::default(),
             menu_category: 0,
             menu_item: 0,
             settings_cursor: 0,
@@ -1700,8 +2339,11 @@ mod tests {
             plugin_status: Vec::new(),
             plugin_commands: Vec::new(),
             plugin_decorations: std::collections::BTreeMap::new(),
+            git_modified_paths: std::collections::HashSet::new(),
             git_status_view: None,
             git_diff: None,
+            git_diff_side_by_side: false,
+            git_diff_origin: crate::app::GitDiffOrigin::default(),
             git_log: Vec::new(),
             git_log_selected: 0,
             git_log_detail: None,
@@ -1879,13 +2521,15 @@ mod tests {
         state.screen = Screen::Mcd;
         assert!(rendered(&state, 100, 30).contains("Mdir4 Change Directory"));
 
-        state.qcd.push(crate::config::schema::QcdEntry {
-            label: "Work 한글".to_string(),
-            path: PathBuf::from("/한글"),
-            position: 0,
-        });
-        state.screen = Screen::Qcd;
-        assert!(rendered(&state, 100, 30).contains("QCD Favorites"));
+        state.favorites = crate::plugins::favorites::FavoritesState::from_entries(vec![
+            crate::plugins::favorites::FavoriteEntry {
+                label: "Work 한글".to_string(),
+                path: PathBuf::from("/한글"),
+                position: 0,
+            },
+        ]);
+        state.screen = Screen::Favorites;
+        assert!(rendered(&state, 100, 30).contains("[FAVORITES]"));
 
         state.screen = Screen::Menu;
         assert!(rendered(&state, 100, 30).contains("Mdir4 Menu"));
@@ -1893,6 +2537,32 @@ mod tests {
         let settings = rendered(&state, 100, 30);
         assert!(settings.contains("Settings Preview"));
         assert!(settings.contains("Keymap"));
+    }
+
+    #[test]
+    fn favorites_view_and_edit_popup_show_the_requested_commands() {
+        let mut state = state_with(vec![entry("stale-main.txt", EntryKind::File, 42)], 100, 30);
+        state.favorites = crate::plugins::favorites::FavoritesState::from_entries(vec![
+            crate::plugins::favorites::FavoriteEntry {
+                label: "Work".into(),
+                path: PathBuf::from("/work"),
+                position: 0,
+            },
+        ]);
+        state.screen = Screen::Favorites;
+
+        let list = rendered(&state, 100, 30);
+        assert!(list.contains("[FAVORITES]"));
+        assert!(list.contains("F2 Edit"));
+        assert!(list.contains("F3 Add"));
+        assert!(list.contains("F8 Del"));
+        assert!(!list.contains("stale-main.txt"));
+
+        crate::app::reduce(&mut state, crate::app::Action::FavoritesEdit);
+        let popup = rendered(&state, 100, 30);
+        assert!(popup.contains("[FAVORITES]"));
+        assert!(popup.contains("Edit Favorite"));
+        assert!(popup.contains("/work"));
     }
 
     #[test]
@@ -1944,6 +2614,21 @@ mod tests {
         assert!(output.contains("Loading current directory tree"));
         assert!(!output.contains("Users"));
         assert!(!output.contains("project"));
+    }
+
+    #[test]
+    fn help_explains_ctrl_function_keys_and_git_modes() {
+        let mut state = state_with(Vec::new(), 80, 25);
+        state.screen = Screen::Help;
+
+        let output = rendered(&state, 80, 25);
+        assert!(output.contains("Ctrl+F1-F12 Git Commands"));
+        assert!(output.contains("Ctrl+F1 Git Status"));
+        assert!(output.contains("Ctrl+F12 Git Refresh"));
+        assert!(output.contains("Git Status Mode"));
+        assert!(output.contains("F5 Stage"));
+        assert!(output.contains("Stash: F5 Apply"));
+        assert!(output.contains("F7 New, F8 Rebase"));
     }
 
     #[test]

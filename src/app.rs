@@ -47,7 +47,7 @@ pub enum Screen {
     Remote,
     ConflictDialog,
     Mcd,
-    Qcd,
+    Favorites,
     Menu,
     Settings,
     GitStatus,
@@ -87,6 +87,7 @@ pub enum Action {
     ToggleMark,
     ToggleMarkAndAdvance,
     SelectAll,
+    ClearSelection,
     Open,
     GoParent,
     Reload,
@@ -126,6 +127,10 @@ pub enum Action {
     ViewerLine(i32),
     ViewerPage(i32),
     ShowViewerSearch,
+    ViewerFunction3,
+    ShowViewerGitDiff {
+        side_by_side: bool,
+    },
     ViewerNextMatch {
         backwards: bool,
     },
@@ -200,14 +205,15 @@ pub enum Action {
     McdOpen,
     McdRescan,
     ShowMcdSearch,
-    ShowQcd,
-    QcdMove(i32),
-    QcdOpen,
-    QcdAddCurrent,
-    QcdDelete,
-    QcdEdit,
-    QcdDigit(usize),
-    QcdReorder(i32),
+    ShowFavorites,
+    FavoritesMove(i32),
+    FavoritesOpen,
+    FavoritesDelete,
+    FavoritesEdit,
+    FavoritesShortcut(usize),
+    FavoritesRegisterSlot(usize),
+    FavoritesShowAdd,
+    FavoritesReorder(i32),
     ShowMenu,
     MenuMove(i32),
     MenuCategory(i32),
@@ -287,6 +293,7 @@ pub enum Action {
     GitDiffPage(i32),
     GitDiffHome,
     GitDiffEnd,
+    GitDiffToggleSideBySide,
     ShowGitDiffSearch,
     GitDiffNextMatch {
         backwards: bool,
@@ -404,6 +411,19 @@ pub enum BrowserGitPathOperation {
     Unstage,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McdOperation {
+    Copy,
+    Move,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GitDiffOrigin {
+    #[default]
+    GitStatus,
+    Viewer,
+}
+
 #[derive(Debug)]
 pub struct AppState {
     pub current_path: PathBuf,
@@ -431,8 +451,8 @@ pub struct AppState {
     pub long_view: bool,
     pub theme: crate::theme::catalog::Theme,
     pub mcd: Option<crate::mcd::tree::DirectoryTree>,
-    pub qcd: Vec<crate::config::schema::QcdEntry>,
-    pub selected_qcd: usize,
+    pub mcd_operation: Option<McdOperation>,
+    pub favorites: crate::plugins::favorites::FavoritesState,
     pub menu_category: usize,
     pub menu_item: usize,
     pub settings_cursor: usize,
@@ -443,8 +463,11 @@ pub struct AppState {
     pub plugin_status: Vec<crate::plugins::api::StyledText>,
     pub plugin_commands: Vec<command_registry::PluginCommandHint>,
     pub plugin_decorations: BTreeMap<String, crate::plugins::api::FileDecoration>,
+    pub git_modified_paths: HashSet<PathBuf>,
     pub git_status_view: Option<crate::plugins::git::status_view::GitStatusViewState>,
     pub git_diff: Option<(PathBuf, ViewerState)>,
+    pub git_diff_side_by_side: bool,
+    pub git_diff_origin: GitDiffOrigin,
     pub git_log: Vec<crate::plugins::git::history::GitLogEntry>,
     pub git_log_selected: usize,
     pub git_log_detail: Option<ViewerState>,
@@ -491,8 +514,8 @@ impl AppState {
             long_view: false,
             theme: crate::theme::catalog::Theme::classic(),
             mcd: None,
-            qcd: Vec::new(),
-            selected_qcd: 0,
+            mcd_operation: None,
+            favorites: crate::plugins::favorites::FavoritesState::default(),
             menu_category: 0,
             menu_item: 0,
             settings_cursor: 0,
@@ -503,8 +526,11 @@ impl AppState {
             plugin_status: Vec::new(),
             plugin_commands: Vec::new(),
             plugin_decorations: BTreeMap::new(),
+            git_modified_paths: HashSet::new(),
             git_status_view: None,
             git_diff: None,
+            git_diff_side_by_side: false,
+            git_diff_origin: GitDiffOrigin::default(),
             git_log: Vec::new(),
             git_log_selected: 0,
             git_log_detail: None,
@@ -517,6 +543,12 @@ impl AppState {
 
     pub fn selected_entry(&self) -> Option<&FileEntry> {
         self.entries.get(self.selected)
+    }
+
+    pub fn viewer_is_git_modified(&self) -> bool {
+        self.viewer
+            .as_ref()
+            .is_some_and(|(path, _)| self.git_modified_paths.contains(path))
     }
 
     pub fn marked_summary(&self) -> (usize, u64) {
@@ -593,6 +625,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                     state.marked.clear();
                 }
                 state.message = attention;
+                state.git_modified_paths.clear();
                 state.plugin_decorations.retain(|_, decoration| {
                     !decoration.text.spans.iter().any(|span| {
                         span.role
@@ -624,6 +657,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                         .is_some_and(|role| role.as_str().starts_with("plugin.git."))
                 })
             });
+            state.git_modified_paths.clear();
             if let Ok(Some(status)) = result {
                 let statuses: BTreeMap<std::ffi::OsString, crate::plugins::git::model::GitStatus> =
                     status
@@ -646,6 +680,9 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                         .get(&entry.name)
                         .copied()
                         .unwrap_or(crate::plugins::git::model::GitStatus::Clean);
+                    if git_status == crate::plugins::git::model::GitStatus::Modified {
+                        state.git_modified_paths.insert(entry.path.clone());
+                    }
                     let decoration = crate::plugins::git::decoration::browser_decoration_for_entry(
                         entry_id.clone(),
                         git_status,
@@ -696,6 +733,9 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::SelectAll => {
             selection::select_all(&mut state.marked, &state.entries);
         }
+        Action::ClearSelection => {
+            state.marked.clear();
+        }
         Action::Open => {
             if let Some(entry) = state.selected_entry().cloned() {
                 if entry.is_directory() {
@@ -728,6 +768,8 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 .selected_entry()
                 .and_then(|entry| (entry.kind != EntryKind::Parent).then(|| entry.path.clone()))
             {
+                state.git_diff_side_by_side = false;
+                state.git_diff_origin = GitDiffOrigin::GitStatus;
                 state.git_diff = Some((path.clone(), ViewerState::Loading { generation: 1 }));
                 state.screen = Screen::GitDiff;
                 return vec![Effect::LoadGitDiffForPath {
@@ -1104,6 +1146,8 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 .and_then(|view| view.rows.get(view.selected))
                 .map(|row| row.path.clone());
             if let Some(path) = path {
+                state.git_diff_side_by_side = false;
+                state.git_diff_origin = GitDiffOrigin::GitStatus;
                 state.git_diff = Some((
                     path.as_path().to_path_buf(),
                     ViewerState::Loading { generation: 1 },
@@ -1155,6 +1199,12 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 document.top_line = document.lines.len().saturating_sub(1);
             }
         }
+        Action::GitDiffToggleSideBySide => {
+            state.git_diff_side_by_side = !state.git_diff_side_by_side;
+            if let Some((_, ViewerState::Ready(document))) = &mut state.git_diff {
+                document.top_line = 0;
+            }
+        }
         Action::ShowGitDiffSearch => {
             state.input_dialog = Some(InputDialog::new(
                 "Find Git Diff",
@@ -1193,24 +1243,14 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.screen = Screen::InputDialog;
         }
         action @ (Action::ShowCopy | Action::ShowMove) => {
-            let purpose = if matches!(action, Action::ShowCopy) {
-                InputPurpose::Copy
+            let operation = if matches!(action, Action::ShowCopy) {
+                McdOperation::Copy
             } else {
-                InputPurpose::Move
+                McdOperation::Move
             };
             if !state.operation_targets().is_empty() {
-                state.input_dialog = Some(InputDialog::new(
-                    if purpose == InputPurpose::Copy {
-                        "Copy"
-                    } else {
-                        "Move"
-                    },
-                    "Destination directory",
-                    state.current_path.to_string_lossy(),
-                    purpose,
-                    None,
-                ));
-                state.screen = Screen::InputDialog;
+                state.mcd_operation = Some(operation);
+                return open_mcd(state);
             }
         }
         Action::ShowDelete { permanent } => {
@@ -1372,27 +1412,6 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                             None
                         }
                     },
-                    InputPurpose::Copy | InputPurpose::Move => {
-                        if value.is_empty() {
-                            let mut dialog = dialog;
-                            dialog.error = Some("Destination must not be empty.".to_string());
-                            state.input_dialog = Some(dialog);
-                            None
-                        } else {
-                            let target = PathBuf::from(value);
-                            let target = if target.is_absolute() {
-                                target
-                            } else {
-                                state.current_path.join(target)
-                            };
-                            let sources = state.operation_targets();
-                            Some(if dialog.purpose == InputPurpose::Copy {
-                                Effect::Copy { sources, target }
-                            } else {
-                                Effect::Move { sources, target }
-                            })
-                        }
-                    }
                     InputPurpose::SaveAs => {
                         state.editor.as_ref().map(|(_, editor)| Effect::SaveFile {
                             path: PathBuf::from(value),
@@ -1485,11 +1504,39 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                         state.screen = Screen::Editor;
                         None
                     }
-                    InputPurpose::QcdLabel => {
-                        if let Some(entry) = state.qcd.get_mut(state.selected_qcd) {
-                            entry.label = value;
+                    InputPurpose::FavoritePath => {
+                        if value.is_empty() {
+                            let mut dialog = dialog;
+                            dialog.error = Some("Path cannot be blank.".into());
+                            state.input_dialog = Some(dialog);
+                        } else if let Err(error) =
+                            state.favorites.update_selected_path(PathBuf::from(value))
+                        {
+                            let mut dialog = dialog;
+                            dialog.error = Some(error);
+                            state.input_dialog = Some(dialog);
+                        } else {
+                            state.screen = Screen::Favorites;
                         }
-                        state.screen = Screen::Qcd;
+                        None
+                    }
+                    InputPurpose::FavoriteAdd => {
+                        if value.is_empty() {
+                            let mut dialog = dialog;
+                            dialog.error = Some("Path cannot be blank.".into());
+                            state.input_dialog = Some(dialog);
+                        } else {
+                            match state.favorites.add(PathBuf::from(value)) {
+                                Ok(_) => {
+                                    state.screen = Screen::Favorites;
+                                }
+                                Err(error) => {
+                                    let mut dialog = dialog;
+                                    dialog.error = Some(error);
+                                    state.input_dialog = Some(dialog);
+                                }
+                            }
+                        }
                         None
                     }
                     InputPurpose::McdSearch => {
@@ -1556,6 +1603,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                             target,
                         }];
                     }
+                    ConfirmOperation::FavoriteDelete { index } => {
+                        state.favorites.delete_selected(index);
+                        state.screen = Screen::Favorites;
+                    }
                     ConfirmOperation::OverwriteSave { path } => {
                         if let Some((_, editor)) = &state.editor {
                             state.screen = Screen::Progress;
@@ -1575,10 +1626,15 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 .input_dialog
                 .as_ref()
                 .is_some_and(|dialog| dialog.purpose == InputPurpose::McdSearch);
-            let qcd_dialog = state
-                .input_dialog
-                .as_ref()
-                .is_some_and(|dialog| dialog.purpose == InputPurpose::QcdLabel);
+            let favorite_dialog = state.input_dialog.as_ref().is_some_and(|dialog| {
+                matches!(
+                    dialog.purpose,
+                    InputPurpose::FavoritePath | InputPurpose::FavoriteAdd
+                )
+            });
+            let favorite_confirm = state.confirm_dialog.as_ref().is_some_and(|dialog| {
+                matches!(dialog.operation, ConfirmOperation::FavoriteDelete { .. })
+            });
             let git_diff_dialog = state
                 .input_dialog
                 .as_ref()
@@ -1599,8 +1655,8 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.confirm_dialog = None;
             state.screen = if mcd_dialog {
                 Screen::Mcd
-            } else if qcd_dialog {
-                Screen::Qcd
+            } else if favorite_dialog || favorite_confirm {
+                Screen::Favorites
             } else if git_diff_dialog {
                 Screen::GitDiff
             } else if git_commit_dialog {
@@ -1657,6 +1713,31 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 None,
             ));
             state.screen = Screen::InputDialog;
+        }
+        Action::ViewerFunction3 => {
+            if state.viewer_is_git_modified() {
+                return reduce(
+                    state,
+                    Action::ShowViewerGitDiff {
+                        side_by_side: false,
+                    },
+                );
+            }
+            return reduce(state, Action::ViewerNextMatch { backwards: false });
+        }
+        Action::ShowViewerGitDiff { side_by_side } => {
+            if !state.viewer_is_git_modified() {
+                state.message = Some("Git diff is available only for modified files.".into());
+            } else if let Some(path) = state.viewer.as_ref().map(|(path, _)| path.clone()) {
+                state.git_diff_side_by_side = side_by_side;
+                state.git_diff_origin = GitDiffOrigin::Viewer;
+                state.git_diff = Some((path.clone(), ViewerState::Loading { generation: 1 }));
+                state.screen = Screen::GitDiff;
+                return vec![Effect::LoadGitDiffForPath {
+                    directory: state.current_path.clone(),
+                    path,
+                }];
+            }
         }
         Action::ViewerNextMatch { backwards } => {
             if let Some((_, ViewerState::Ready(document))) = &mut state.viewer {
@@ -1840,25 +1921,8 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             });
         }
         Action::ShowMcd => {
-            let root_path = state
-                .current_path
-                .ancestors()
-                .last()
-                .unwrap_or(&state.current_path)
-                .to_path_buf();
-            let mut tree = crate::mcd::tree::DirectoryTree::default();
-            let root = tree.add_root(root_path.clone());
-            for path in &state.persisted_config.mcd_history {
-                tree.remember(path.clone());
-            }
-            tree.reveal_path(&state.current_path);
-            tree.set_loading(root);
-            state.mcd = Some(tree);
-            state.screen = Screen::Mcd;
-            return vec![Effect::LoadMcdChildren {
-                node: root,
-                path: root_path,
-            }];
+            state.mcd_operation = None;
+            return open_mcd(state);
         }
         Action::McdLoaded { node, result } => {
             if let Some(tree) = &mut state.mcd {
@@ -1951,96 +2015,94 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 state.persisted_config.mcd_history.insert(0, path.clone());
                 state.persisted_config.mcd_history.truncate(100);
                 state.mcd = None;
-                state.screen = Screen::Main;
-                return vec![Effect::LoadDirectory(path)];
-            }
-        }
-        Action::ShowQcd => {
-            state.selected_qcd = state.selected_qcd.min(state.qcd.len().saturating_sub(1));
-            state.screen = Screen::Qcd;
-        }
-        Action::QcdMove(delta) => {
-            state.selected_qcd = if delta < 0 {
-                state.selected_qcd.saturating_sub(1)
-            } else {
-                (state.selected_qcd + 1).min(state.qcd.len().saturating_sub(1))
-            };
-        }
-        Action::QcdOpen => {
-            if let Some(path) = state
-                .qcd
-                .get(state.selected_qcd)
-                .map(|entry| entry.path.clone())
-            {
-                state.screen = Screen::Main;
-                return vec![Effect::LoadDirectory(path)];
-            }
-        }
-        Action::QcdAddCurrent => {
-            if state.qcd.len() >= 100 {
-                state.message = Some("QCD is full (maximum 100 entries).".to_string());
-            } else if let Some(index) = state
-                .qcd
-                .iter()
-                .position(|entry| entry.path == state.current_path)
-            {
-                state.selected_qcd = index;
-                state.message = Some("This path is already in QCD.".to_string());
-            } else {
-                let label = state
-                    .current_path
-                    .file_name()
-                    .unwrap_or(state.current_path.as_os_str())
-                    .to_string_lossy()
-                    .into_owned();
-                state.qcd.push(crate::config::schema::QcdEntry {
-                    label,
-                    path: state.current_path.clone(),
-                    position: state.qcd.len(),
-                });
-                state.selected_qcd = state.qcd.len() - 1;
-            }
-        }
-        Action::QcdDelete => {
-            if state.selected_qcd < state.qcd.len() {
-                state.qcd.remove(state.selected_qcd);
-            }
-            state.selected_qcd = state.selected_qcd.min(state.qcd.len().saturating_sub(1));
-            for (position, entry) in state.qcd.iter_mut().enumerate() {
-                entry.position = position;
-            }
-        }
-        Action::QcdReorder(delta) => {
-            if !state.qcd.is_empty() {
-                let target = if delta < 0 {
-                    state.selected_qcd.saturating_sub(1)
-                } else {
-                    (state.selected_qcd + 1).min(state.qcd.len() - 1)
+                let effect = match state.mcd_operation.take() {
+                    Some(McdOperation::Copy) => Effect::Copy {
+                        sources: state.operation_targets(),
+                        target: path,
+                    },
+                    Some(McdOperation::Move) => Effect::Move {
+                        sources: state.operation_targets(),
+                        target: path,
+                    },
+                    None => Effect::LoadDirectory(path),
                 };
-                state.qcd.swap(state.selected_qcd, target);
-                state.selected_qcd = target;
-                for (position, entry) in state.qcd.iter_mut().enumerate() {
-                    entry.position = position;
+                if matches!(&effect, Effect::Copy { .. } | Effect::Move { .. }) {
+                    state.screen = Screen::Progress;
+                    state.message = Some("Working...".to_string());
+                } else {
+                    state.screen = Screen::Main;
                 }
+                return vec![effect];
             }
         }
-        Action::QcdEdit => {
-            if let Some(entry) = state.qcd.get(state.selected_qcd) {
+        Action::ShowFavorites => {
+            state.favorites.select(state.favorites.selected());
+            state.screen = Screen::Favorites;
+        }
+        Action::FavoritesMove(delta) => state.favorites.move_selection(delta),
+        Action::FavoritesOpen => {
+            if let Some(path) = state.favorites.selected_path() {
+                state.screen = Screen::Main;
+                return vec![Effect::LoadDirectory(path)];
+            }
+        }
+        Action::FavoritesDelete => {
+            if let Some(entry) = state.favorites.selected_entry() {
+                state.confirm_dialog = Some(ConfirmDialog {
+                    title: "Delete Favorite".into(),
+                    message: format!("Remove {} from favorites?", entry.path.display()),
+                    confirm_label: "Delete".into(),
+                    operation: ConfirmOperation::FavoriteDelete {
+                        index: state.favorites.selected(),
+                    },
+                });
+                state.screen = Screen::ConfirmDialog;
+            }
+        }
+        Action::FavoritesReorder(delta) => state.favorites.reorder(delta),
+        Action::FavoritesEdit => {
+            if let Some(entry) = state.favorites.selected_entry() {
                 state.input_dialog = Some(InputDialog::new(
-                    "Edit QCD",
-                    "Label",
-                    entry.label.clone(),
-                    InputPurpose::QcdLabel,
+                    "Edit Favorite",
+                    "Path",
+                    entry.path.to_string_lossy(),
+                    InputPurpose::FavoritePath,
                     None,
                 ));
                 state.screen = Screen::InputDialog;
             }
         }
-        Action::QcdDigit(index) => {
-            if index < state.qcd.len() {
-                state.selected_qcd = index;
-                return reduce(state, Action::QcdOpen);
+        Action::FavoritesShortcut(slot) => {
+            if let Some(path) = state.favorites.select_slot(slot) {
+                state.screen = Screen::Main;
+                return vec![Effect::LoadDirectory(path)];
             }
+            state.message = Some(format!("Favorite slot {} is empty.", slot + 1));
+        }
+        Action::FavoritesRegisterSlot(index) => {
+            match state
+                .favorites
+                .register_slot(index, state.current_path.clone())
+            {
+                Ok(_) => {
+                    state.message = Some(format!(
+                        "Registered {} as favorite {}.",
+                        state.current_path.display(),
+                        index + 1
+                    ));
+                }
+                Err(error) => state.message = Some(error),
+            }
+        }
+        Action::FavoritesShowAdd => {
+            state.input_dialog = Some(InputDialog::new(
+                "Register Favorite",
+                "Path",
+                state.current_path.to_string_lossy(),
+                InputPurpose::FavoriteAdd,
+                None,
+            ));
+            state.screen = Screen::InputDialog;
         }
         Action::ShowMenu => {
             state.menu_category = 0;
@@ -2189,6 +2251,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::OpenDrivePicker => {
             if state.screen == Screen::Mcd {
                 state.mcd = None;
+                state.mcd_operation = None;
             }
             state.screen = Screen::DrivePicker;
             state.drives.clear();
@@ -2364,7 +2427,17 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
         Action::RequestQuit => state.screen = Screen::QuitConfirm,
         Action::CloseOverlay => {
-            if state.screen == Screen::Help && state.mcd.is_some() {
+            if state.screen == Screen::GitStatus
+                && state
+                    .git_status_view
+                    .as_ref()
+                    .is_some_and(|view| !view.marked.is_empty())
+            {
+                if let Some(view) = &mut state.git_status_view {
+                    view.marked.clear();
+                }
+                return Vec::new();
+            } else if state.screen == Screen::Help && state.mcd.is_some() {
                 state.screen = Screen::Mcd;
                 return Vec::new();
             } else if state.screen == Screen::GitLogDetail {
@@ -2385,10 +2458,17 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 return Vec::new();
             } else if state.screen == Screen::GitDiff {
                 state.git_diff = None;
-                state.screen = Screen::GitStatus;
+                state.git_diff_side_by_side = false;
+                state.screen = match state.git_diff_origin {
+                    GitDiffOrigin::Viewer if state.viewer.is_some() => Screen::Viewer,
+                    GitDiffOrigin::Viewer => Screen::Main,
+                    GitDiffOrigin::GitStatus => Screen::GitStatus,
+                };
+                state.git_diff_origin = GitDiffOrigin::GitStatus;
                 return Vec::new();
             } else if state.screen == Screen::Mcd {
                 state.mcd = None;
+                state.mcd_operation = None;
             } else if state.screen == Screen::Viewer {
                 state.viewer = None;
             } else if state.screen == Screen::Editor {
@@ -2417,10 +2497,33 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
     Vec::new()
 }
 
+fn open_mcd(state: &mut AppState) -> Vec<Effect> {
+    let root_path = state
+        .current_path
+        .ancestors()
+        .last()
+        .unwrap_or(&state.current_path)
+        .to_path_buf();
+    let mut tree = crate::mcd::tree::DirectoryTree::default();
+    let root = tree.add_root(root_path.clone());
+    for path in &state.persisted_config.mcd_history {
+        tree.remember(path.clone());
+    }
+    tree.reveal_path(&state.current_path);
+    tree.set_loading(root);
+    state.mcd = Some(tree);
+    state.screen = Screen::Mcd;
+    vec![Effect::LoadMcdChildren {
+        node: root,
+        path: root_path,
+    }]
+}
+
 fn menu_len(category: usize) -> usize {
     match category {
         0 | 1 => 4,
-        2 | 3 => 3,
+        2 => 2,
+        3 => 3,
         _ => 1,
     }
 }
@@ -2438,7 +2541,6 @@ fn menu_command(category: usize, item: usize) -> Option<command_registry::Comman
         (1, 3) => ToggleHidden,
         (2, 0) => MakeDirectory,
         (2, 1) => Mcd,
-        (2, 2) => Qcd,
         (3, 0) => View,
         (3, 1) => Edit,
         (3, 2) => OpenDrivePicker,
@@ -2458,7 +2560,12 @@ pub fn config_from_state(state: &AppState) -> crate::config::Config {
     };
     config.show_hidden = state.show_hidden;
     config.theme = state.theme.name.clone();
-    config.qcd = state.qcd.clone();
+    state.favorites.write_plugin_config(
+        config
+            .plugins
+            .entry(crate::plugins::favorites::FAVORITES_PLUGIN_ID.into())
+            .or_default(),
+    );
     config.sort.key = format!("{:?}", state.sort_key).to_lowercase();
     config.sort.descending = state.sort_direction == SortDirection::Descending;
     config
@@ -2516,8 +2623,8 @@ mod tests {
             long_view: false,
             theme: crate::theme::catalog::Theme::classic(),
             mcd: None,
-            qcd: Vec::new(),
-            selected_qcd: 0,
+            mcd_operation: None,
+            favorites: crate::plugins::favorites::FavoritesState::default(),
             menu_category: 0,
             menu_item: 0,
             settings_cursor: 0,
@@ -2528,8 +2635,11 @@ mod tests {
             plugin_status: Vec::new(),
             plugin_commands: Vec::new(),
             plugin_decorations: BTreeMap::new(),
+            git_modified_paths: HashSet::new(),
             git_status_view: None,
             git_diff: None,
+            git_diff_side_by_side: false,
+            git_diff_origin: GitDiffOrigin::default(),
             git_log: Vec::new(),
             git_log_selected: 0,
             git_log_detail: None,
@@ -2582,6 +2692,11 @@ mod tests {
             reduce(&mut app, Action::RefreshGitStatus).as_slice(),
             [Effect::LoadGitStatus(_)]
         ));
+        reduce(&mut app, Action::CloseOverlay);
+        assert_eq!(app.screen, Screen::GitStatus);
+        assert!(app.git_status_view.as_ref().unwrap().marked.is_empty());
+        reduce(&mut app, Action::CloseOverlay);
+        assert_eq!(app.screen, Screen::Main);
     }
 
     #[test]
@@ -2620,10 +2735,71 @@ mod tests {
             app.git_diff,
             Some((_, ViewerState::Ready(ref document))) if document.search.as_deref() == Some("new")
         ));
+        reduce(&mut app, Action::GitDiffToggleSideBySide);
+        assert!(app.git_diff_side_by_side);
+        assert!(matches!(
+            app.git_diff,
+            Some((_, ViewerState::Ready(ref document))) if document.top_line == 0
+        ));
         reduce(&mut app, Action::GitDiffEnd);
         reduce(&mut app, Action::CloseOverlay);
         assert_eq!(app.screen, Screen::GitStatus);
         assert!(app.git_diff.is_none());
+        assert!(!app.git_diff_side_by_side);
+    }
+
+    #[test]
+    fn modified_viewer_opens_diff_modes_and_returns_to_the_viewer() {
+        let mut app = state();
+        let path = PathBuf::from("/test/a");
+        app.viewer = Some((path.clone(), ViewerState::decode(b"old\nnew\n".to_vec())));
+        app.git_modified_paths.insert(path.clone());
+        app.screen = Screen::Viewer;
+
+        assert_eq!(
+            reduce(&mut app, Action::ViewerFunction3),
+            vec![Effect::LoadGitDiffForPath {
+                directory: PathBuf::from("/test"),
+                path: path.clone(),
+            }]
+        );
+        assert_eq!(app.screen, Screen::GitDiff);
+        assert!(!app.git_diff_side_by_side);
+        assert_eq!(app.git_diff_origin, GitDiffOrigin::Viewer);
+
+        reduce(&mut app, Action::CloseOverlay);
+        assert_eq!(app.screen, Screen::Viewer);
+        assert!(app.viewer.is_some());
+
+        assert_eq!(
+            reduce(&mut app, Action::ShowViewerGitDiff { side_by_side: true },),
+            vec![Effect::LoadGitDiffForPath {
+                directory: PathBuf::from("/test"),
+                path,
+            }]
+        );
+        assert_eq!(app.screen, Screen::GitDiff);
+        assert!(app.git_diff_side_by_side);
+    }
+
+    #[test]
+    fn clean_viewer_keeps_f3_as_next_search_match() {
+        let mut app = state();
+        let mut viewer = match ViewerState::decode(b"match\nother\nmatch\n".to_vec()) {
+            ViewerState::Ready(viewer) => viewer,
+            _ => unreachable!(),
+        };
+        viewer.search("match".into());
+        app.viewer = Some((PathBuf::from("/test/a"), ViewerState::Ready(viewer)));
+        app.screen = Screen::Viewer;
+
+        assert!(reduce(&mut app, Action::ViewerFunction3).is_empty());
+        assert_eq!(app.screen, Screen::Viewer);
+        assert!(matches!(
+            app.viewer,
+            Some((_, ViewerState::Ready(ref viewer)))
+                if viewer.current_match == 1 && viewer.top_line == 2
+        ));
     }
 
     #[test]
@@ -2868,6 +3044,11 @@ mod tests {
         assert_eq!(modified.text.spans[0].text, "M ");
         assert_eq!(clean.text.spans[0].text, "  ");
         assert_eq!(app.plugin_decorations.len(), 2);
+        assert!(app.git_modified_paths.contains(Path::new("/test/main.rs")));
+        assert!(
+            !app.git_modified_paths
+                .contains(Path::new("/test/clean.txt"))
+        );
     }
 
     #[test]
@@ -2924,6 +3105,77 @@ mod tests {
         assert_eq!(app.screen, Screen::Help);
         reduce(&mut app, Action::CloseOverlay);
         assert_eq!(app.screen, Screen::Mcd);
+        assert_eq!(app.mcd_operation, None);
+    }
+
+    #[test]
+    fn copy_and_move_choose_their_destination_through_mcd() {
+        for (action, operation) in [
+            (Action::ShowCopy, McdOperation::Copy),
+            (Action::ShowMove, McdOperation::Move),
+        ] {
+            let mut app = state();
+            let source = app.selected_entry().unwrap().path.clone();
+
+            assert!(matches!(
+                reduce(&mut app, action).as_slice(),
+                [Effect::LoadMcdChildren { .. }]
+            ));
+            assert_eq!(app.screen, Screen::Mcd);
+            assert_eq!(app.mcd_operation, Some(operation));
+            assert!(app.input_dialog.is_none());
+
+            let root = app
+                .mcd
+                .as_ref()
+                .unwrap()
+                .node_for_path(Path::new("/"))
+                .unwrap()
+                .id;
+            reduce(
+                &mut app,
+                Action::McdLoaded {
+                    node: root,
+                    result: Ok(vec![PathBuf::from("/destination"), PathBuf::from("/test")]),
+                },
+            );
+            let destination = app
+                .mcd
+                .as_ref()
+                .unwrap()
+                .node_for_path(Path::new("/destination"))
+                .unwrap()
+                .id;
+            assert!(app.mcd.as_mut().unwrap().select_node(destination));
+
+            let effects = reduce(&mut app, Action::McdOpen);
+            let expected = match operation {
+                McdOperation::Copy => Effect::Copy {
+                    sources: vec![source],
+                    target: PathBuf::from("/destination"),
+                },
+                McdOperation::Move => Effect::Move {
+                    sources: vec![source],
+                    target: PathBuf::from("/destination"),
+                },
+            };
+            assert_eq!(effects, vec![expected]);
+            assert_eq!(app.current_path, PathBuf::from("/test"));
+            assert_eq!(app.screen, Screen::Progress);
+            assert!(app.mcd.is_none());
+            assert_eq!(app.mcd_operation, None);
+        }
+    }
+
+    #[test]
+    fn cancelling_mcd_destination_selection_clears_the_pending_operation() {
+        let mut app = state();
+        reduce(&mut app, Action::ShowCopy);
+        reduce(&mut app, Action::CloseOverlay);
+
+        assert_eq!(app.screen, Screen::Main);
+        assert!(app.mcd.is_none());
+        assert_eq!(app.mcd_operation, None);
     }
 
     #[test]
@@ -2998,7 +3250,7 @@ mod tests {
     }
 
     #[test]
-    fn long_view_qcd_menu_and_settings_preserve_state() {
+    fn long_view_favorites_and_settings_preserve_state() {
         let mut app = state();
         app.current_path = PathBuf::from("/test/work");
         let selected = app.selected_entry().unwrap().path.clone();
@@ -3006,13 +3258,12 @@ mod tests {
         assert!(app.long_view);
         assert_eq!(app.selected_entry().unwrap().path, selected);
 
-        reduce(&mut app, Action::QcdAddCurrent);
-        reduce(&mut app, Action::QcdAddCurrent);
-        assert_eq!(app.qcd.len(), 1);
-        reduce(&mut app, Action::ShowQcd);
-        assert_eq!(app.screen, Screen::Qcd);
+        app.favorites.add(app.current_path.clone()).unwrap();
+        assert_eq!(app.favorites.entries().len(), 1);
+        reduce(&mut app, Action::ShowFavorites);
+        assert_eq!(app.screen, Screen::Favorites);
         assert!(matches!(
-            reduce(&mut app, Action::QcdOpen).as_slice(),
+            reduce(&mut app, Action::FavoritesOpen).as_slice(),
             [Effect::LoadDirectory(_)]
         ));
 
@@ -3027,6 +3278,83 @@ mod tests {
         reduce(&mut app, Action::CloseOverlay);
         assert_eq!(app.screen, Screen::Main);
         assert!(app.settings_preview.is_none());
+    }
+
+    #[test]
+    fn favorite_shortcut_registration_and_navigation_use_numbered_slots() {
+        let mut app = state();
+        app.current_path = PathBuf::from("/test/work");
+
+        reduce(&mut app, Action::FavoritesRegisterSlot(0));
+        assert_eq!(app.favorites.entries()[0].path, PathBuf::from("/test/work"));
+        assert_eq!(
+            app.message.as_deref(),
+            Some("Registered /test/work as favorite 1.")
+        );
+
+        assert_eq!(
+            reduce(&mut app, Action::FavoritesShortcut(0)),
+            vec![Effect::LoadDirectory(PathBuf::from("/test/work"))]
+        );
+    }
+
+    #[test]
+    fn sparse_favorite_shortcut_keeps_the_requested_number() {
+        let mut app = state();
+        app.current_path = PathBuf::from("/test/work");
+
+        reduce(&mut app, Action::FavoritesRegisterSlot(8));
+        assert_eq!(app.favorites.entries()[0].position, 8);
+        assert_eq!(
+            reduce(&mut app, Action::FavoritesShortcut(8)),
+            vec![Effect::LoadDirectory(PathBuf::from("/test/work"))]
+        );
+        assert!(reduce(&mut app, Action::FavoritesShortcut(0)).is_empty());
+        assert_eq!(app.message.as_deref(), Some("Favorite slot 1 is empty."));
+    }
+
+    #[test]
+    fn favorite_list_crud_uses_path_and_confirmation_dialogs() {
+        let mut app = state();
+        app.current_path = PathBuf::from("/test/work");
+        app.favorites.add(app.current_path.clone()).unwrap();
+        reduce(&mut app, Action::ShowFavorites);
+
+        reduce(&mut app, Action::FavoritesEdit);
+        assert_eq!(app.screen, Screen::InputDialog);
+        assert_eq!(
+            app.input_dialog.as_ref().map(|dialog| dialog.purpose),
+            Some(InputPurpose::FavoritePath)
+        );
+        app.input_dialog.as_mut().unwrap().value = "/test/edited".into();
+        reduce(&mut app, Action::ConfirmDialog);
+        assert_eq!(app.screen, Screen::Favorites);
+        assert_eq!(
+            app.favorites.entries()[0].path,
+            PathBuf::from("/test/edited")
+        );
+
+        reduce(&mut app, Action::FavoritesShowAdd);
+        assert_eq!(app.screen, Screen::InputDialog);
+        assert_eq!(
+            app.input_dialog.as_ref().map(|dialog| dialog.purpose),
+            Some(InputPurpose::FavoriteAdd)
+        );
+        app.input_dialog.as_mut().unwrap().value = "/test/second".into();
+        reduce(&mut app, Action::ConfirmDialog);
+        assert_eq!(app.favorites.entries().len(), 2);
+        assert_eq!(app.favorites.selected(), 1);
+
+        reduce(&mut app, Action::FavoritesDelete);
+        assert_eq!(app.screen, Screen::ConfirmDialog);
+        assert!(matches!(
+            app.confirm_dialog.as_ref().map(|dialog| &dialog.operation),
+            Some(ConfirmOperation::FavoriteDelete { index: 1 })
+        ));
+        reduce(&mut app, Action::ConfirmDialog);
+        assert_eq!(app.screen, Screen::Favorites);
+        assert_eq!(app.favorites.entries().len(), 1);
+        assert_eq!(app.favorites.entries()[0].position, 0);
     }
 
     #[test]

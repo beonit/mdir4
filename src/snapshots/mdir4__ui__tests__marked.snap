@@ -26,4 +26,4 @@ expression: "rendered(&basic, 80, 25)"
                                                                                 
 README.md  2.0K FILE                               │ F 2  D 1  S 1/2.0K  -- Free
 F1 Help       F2 Ren        F3 View      F4 Edit      F5 Copy      F6 Move      
-F7 Dir        F8 Del        F9 Shell     F10 MCD      F11 QCD      F12 Menu
+F7 Dir        F8 Del        F9 Shell     F10 MCD      F11 ---      F12 Menu

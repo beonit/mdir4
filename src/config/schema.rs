@@ -14,7 +14,6 @@ pub struct Config {
     pub theme: String,
     pub keymap: BTreeMap<String, String>,
     pub mcd_history: Vec<PathBuf>,
-    pub qcd: Vec<QcdEntry>,
     pub plugins: BTreeMap<String, PluginConfig>,
 }
 
@@ -30,7 +29,6 @@ impl Default for Config {
             theme: "classic".to_string(),
             keymap: BTreeMap::new(),
             mcd_history: Vec::new(),
-            qcd: Vec::new(),
             plugins: BTreeMap::new(),
         }
     }
@@ -76,12 +74,4 @@ impl Default for SortConfig {
             descending: false,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QcdEntry {
-    pub label: String,
-    pub path: PathBuf,
-    #[serde(default)]
-    pub position: usize,
 }

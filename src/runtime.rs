@@ -201,8 +201,12 @@ fn run_loop(
         .width
         .map(crate::layout::ColumnWidthMode::Custom)
         .unwrap_or_default();
-    state.qcd = loaded.config.qcd.clone();
-    state.qcd.sort_by_key(|entry| entry.position);
+    state.favorites = crate::plugins::favorites::FavoritesState::from_plugin_config(
+        loaded
+            .config
+            .plugins
+            .get(crate::plugins::favorites::FAVORITES_PLUGIN_ID),
+    );
     state.theme = crate::theme::catalog::Theme::builtin(&loaded.config.theme)
         .or_else(|| crate::theme::catalog::load(std::path::Path::new(&loaded.config.theme)).ok())
         .unwrap_or_else(crate::theme::catalog::Theme::classic);
@@ -1369,8 +1373,8 @@ mod tests {
             long_view: false,
             theme: crate::theme::catalog::Theme::classic(),
             mcd: None,
-            qcd: Vec::new(),
-            selected_qcd: 0,
+            mcd_operation: None,
+            favorites: crate::plugins::favorites::FavoritesState::default(),
             menu_category: 0,
             menu_item: 0,
             settings_cursor: 0,
@@ -1381,8 +1385,11 @@ mod tests {
             plugin_status: Vec::new(),
             plugin_commands: Vec::new(),
             plugin_decorations: std::collections::BTreeMap::new(),
+            git_modified_paths: std::collections::HashSet::new(),
             git_status_view: None,
             git_diff: None,
+            git_diff_side_by_side: false,
+            git_diff_origin: crate::app::GitDiffOrigin::default(),
             git_log: Vec::new(),
             git_log_selected: 0,
             git_log_detail: None,

@@ -51,8 +51,8 @@ fn state() -> AppState {
         long_view: false,
         theme: mdir4::theme::catalog::Theme::classic(),
         mcd: None,
-        qcd: Vec::new(),
-        selected_qcd: 0,
+        mcd_operation: None,
+        favorites: mdir4::plugins::favorites::FavoritesState::default(),
         menu_category: 0,
         menu_item: 0,
         settings_cursor: 0,
@@ -63,8 +63,11 @@ fn state() -> AppState {
         plugin_status: Vec::new(),
         plugin_commands: Vec::new(),
         plugin_decorations: std::collections::BTreeMap::new(),
+        git_modified_paths: std::collections::HashSet::new(),
         git_status_view: None,
         git_diff: None,
+        git_diff_side_by_side: false,
+        git_diff_origin: mdir4::app::GitDiffOrigin::default(),
         git_log: Vec::new(),
         git_log_selected: 0,
         git_log_detail: None,
@@ -95,6 +98,18 @@ fn select_all_is_idempotent_and_summary_counts_directories_without_bytes() {
 
     assert_eq!(app.marked.len(), 3);
     assert_eq!(app.marked_summary(), (3, 30));
+}
+
+#[test]
+fn escape_action_clears_all_marked_entries() {
+    let mut app = state();
+    reduce(&mut app, Action::SelectAll);
+    assert_eq!(app.marked.len(), 3);
+
+    reduce(&mut app, Action::ClearSelection);
+
+    assert!(app.marked.is_empty());
+    assert_eq!(app.screen, Screen::Main);
 }
 
 #[test]

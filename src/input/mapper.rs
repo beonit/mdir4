@@ -12,6 +12,23 @@ pub fn map_key(screen: Screen, event: KeyEvent, registry: &CommandRegistry) -> O
 
 pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) -> Option<Action> {
     if screen == Screen::GitStatus {
+        if chord.control
+            && let KeyCode::Function(number) = chord.code
+        {
+            return match number {
+                1 | 12 => Some(Action::RefreshGitStatus),
+                2 => Some(Action::ShowGitDiff),
+                3 => Some(Action::GitStage),
+                4 => Some(Action::GitUnstage),
+                5 => Some(Action::ShowGitCommit),
+                6 => Some(Action::ShowGitAmend),
+                7 | 11 => Some(Action::ShowGitBranches),
+                8 => Some(Action::GitFetch),
+                9 => Some(Action::ShowGitLog),
+                10 => Some(Action::ShowGitStashSave),
+                _ => None,
+            };
+        }
         return match chord {
             KeyChord {
                 code: KeyCode::Escape,
@@ -65,6 +82,10 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
             } => Some(Action::ShowGitCommit),
             KeyChord {
                 code: KeyCode::Function(8),
+                ..
+            } => Some(Action::ShowGitAmend),
+            KeyChord {
+                code: KeyCode::Function(9),
                 ..
             } => Some(Action::ShowGitStash),
             KeyChord {
@@ -156,6 +177,10 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 code: KeyCode::Function(3),
                 ..
             } => Some(Action::GitDiffNextMatch { backwards: false }),
+            KeyChord {
+                code: KeyCode::Function(4),
+                ..
+            } => Some(Action::GitDiffToggleSideBySide),
             _ => None,
         };
     }
@@ -331,7 +356,11 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
             KeyChord {
                 code: KeyCode::Function(3),
                 ..
-            } => Some(Action::ViewerNextMatch { backwards: false }),
+            } => Some(Action::ViewerFunction3),
+            KeyChord {
+                code: KeyCode::Function(4),
+                ..
+            } => Some(Action::ShowViewerGitDiff { side_by_side: true }),
             KeyChord {
                 code: KeyCode::Escape,
                 ..
@@ -348,8 +377,20 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 ..
             } => Some(Action::ViewerPage(-1)),
             KeyChord {
+                code: KeyCode::Character(' '),
+                shift: true,
+                control: false,
+                alt: false,
+            } => Some(Action::ViewerPage(-1)),
+            KeyChord {
                 code: KeyCode::PageDown,
                 ..
+            } => Some(Action::ViewerPage(1)),
+            KeyChord {
+                code: KeyCode::Character(' '),
+                shift: false,
+                control: false,
+                alt: false,
             } => Some(Action::ViewerPage(1)),
             KeyChord {
                 code: KeyCode::Home,
@@ -529,49 +570,45 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
             _ => None,
         };
     }
-    if screen == Screen::Qcd {
+    if screen == Screen::Favorites {
         return match chord {
             KeyChord {
                 code: KeyCode::Up,
                 control: true,
                 ..
-            } => Some(Action::QcdReorder(-1)),
+            } => Some(Action::FavoritesReorder(-1)),
             KeyChord {
                 code: KeyCode::Down,
                 control: true,
                 ..
-            } => Some(Action::QcdReorder(1)),
+            } => Some(Action::FavoritesReorder(1)),
             KeyChord {
                 code: KeyCode::Escape,
                 ..
             } => Some(Action::CloseOverlay),
             KeyChord {
                 code: KeyCode::Up, ..
-            } => Some(Action::QcdMove(-1)),
+            } => Some(Action::FavoritesMove(-1)),
             KeyChord {
                 code: KeyCode::Down,
                 ..
-            } => Some(Action::QcdMove(1)),
+            } => Some(Action::FavoritesMove(1)),
             KeyChord {
                 code: KeyCode::Enter,
                 ..
-            } => Some(Action::QcdOpen),
-            KeyChord {
-                code: KeyCode::Insert,
-                ..
-            } => Some(Action::QcdAddCurrent),
+            } => Some(Action::FavoritesOpen),
             KeyChord {
                 code: KeyCode::Function(2),
                 ..
-            } => Some(Action::QcdEdit),
+            } => Some(Action::FavoritesEdit),
             KeyChord {
-                code: KeyCode::Character('d' | 'D'),
+                code: KeyCode::Function(3),
                 ..
-            } => Some(Action::QcdDelete),
+            } => Some(Action::FavoritesShowAdd),
             KeyChord {
-                code: KeyCode::Character(value @ '1'..='9'),
+                code: KeyCode::Function(8),
                 ..
-            } => Some(Action::QcdDigit(value.to_digit(10).unwrap() as usize - 1)),
+            } => Some(Action::FavoritesDelete),
             _ => None,
         };
     }
@@ -701,6 +738,24 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
             } => Some(Action::RemoteReload),
             _ => None,
         };
+    }
+    if screen == Screen::Main
+        && chord.control
+        && !chord.alt
+        && matches!(chord.code, KeyCode::Character(_))
+    {
+        let KeyCode::Character(character) = chord.code else {
+            unreachable!("character was checked above")
+        };
+        if chord.shift {
+            if let Some(slot) = crate::plugins::favorites::shortcut_slot(character) {
+                return Some(Action::FavoritesRegisterSlot(slot));
+            }
+        } else if let Some(slot) = crate::plugins::favorites::shortcut_slot(character) {
+            return Some(Action::FavoritesShortcut(slot));
+        } else if matches!(character, 'f' | 'F') {
+            return Some(Action::ShowFavorites);
+        }
     }
     if chord == KeyChord::shift(KeyCode::Function(8)) {
         return Some(Action::ShowDelete { permanent: true });

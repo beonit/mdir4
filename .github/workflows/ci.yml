@@ -2,6 +2,10 @@ name: CI
 
 on:
   push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
   pull_request:
 
 permissions:
@@ -14,6 +18,7 @@ jobs:
   quality:
     name: Quality (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    if: github.ref_type != 'tag'
     strategy:
       fail-fast: false
       matrix:
@@ -56,6 +61,7 @@ jobs:
     name: Release candidate (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: quality
+    if: github.ref_type != 'tag'
     strategy:
       fail-fast: false
       matrix:
@@ -104,3 +110,57 @@ jobs:
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 30
+
+  release-linux:
+    name: Publish Linux release
+    runs-on: ubuntu-latest
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all-targets --all-features --locked
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          package_version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          test "$GITHUB_REF_NAME" = "v$package_version"
+          echo "PACKAGE_VERSION=$package_version" >> "$GITHUB_ENV"
+
+      - name: Build locked Linux release binary
+        run: cargo build --release --locked
+
+      - name: Package Linux release
+        run: >-
+          python3 scripts/package_release.py
+          --binary target/release/mdir4
+          --target linux-x86_64
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          dist/mdir4-v${{ env.PACKAGE_VERSION }}-linux-x86_64.zip
+          dist/SHA256SUMS
+          --title "Mdir4 $GITHUB_REF_NAME"
+          --generate-notes

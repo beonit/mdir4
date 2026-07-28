@@ -1,4 +1,5 @@
 pub mod api;
+pub mod favorites;
 pub mod git;
 pub mod host;
 pub mod manager;
