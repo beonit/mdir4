@@ -16,6 +16,8 @@ pub enum InputPurpose {
     SearchEditor,
     FavoritePath,
     FavoriteAdd,
+    AmazonAddPackage,
+    AmazonRemovePackage,
     McdSearch,
 }
 

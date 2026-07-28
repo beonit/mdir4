@@ -53,6 +53,22 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         return;
     }
 
+    let amazon_input = state.screen == Screen::InputDialog
+        && state.input_dialog.as_ref().is_some_and(|dialog| {
+            matches!(
+                dialog.purpose,
+                crate::model::dialog::InputPurpose::AmazonAddPackage
+                    | crate::model::dialog::InputPurpose::AmazonRemovePackage
+            )
+        });
+    if state.screen == Screen::AmazonBuild || amazon_input {
+        render_amazon_build_mode(frame, state, metrics);
+        if amazon_input {
+            render_input_dialog(frame, state, metrics.viewport);
+        }
+        return;
+    }
+
     if state.screen == Screen::Viewer {
         render_viewer(frame, metrics, state);
         return;
@@ -104,6 +120,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
         | Screen::Favorites => {
             unreachable!("full-screen document renders before the main screen")
         }
+        Screen::AmazonBuild => unreachable!("Amazon Build renders before the main screen"),
         Screen::Editor => render_editor(frame, state, metrics.viewport),
         Screen::Progress => render_progress(frame, state, metrics.viewport),
         Screen::DrivePicker => render_drive_picker(frame, state, metrics.viewport),
@@ -904,6 +921,62 @@ fn render_favorites_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &Layo
         metrics,
         &format!("{selected}  │  Up/Down Select  Enter Open  Ctrl+Up/Down Reorder  Esc Files"),
         &favorites_keys(),
+    );
+}
+
+fn render_amazon_build_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
+    frame.render_widget(Clear, metrics.viewport);
+    frame.render_widget(
+        Block::default().style(palette::role(ThemeRole::MainBackground)),
+        metrics.viewport,
+    );
+    let title = format!("{}  [AMAZON BUILD]", state.current_path.display());
+    frame.render_widget(
+        Paragraph::new(pad_or_truncate(&title, metrics.path_bar.width as usize))
+            .style(palette::role(ThemeRole::PathBar)),
+        metrics.path_bar,
+    );
+    let selected = state.amazon_build.selected();
+    let mut rows = Vec::new();
+    let mut section = "";
+    for (index, command) in crate::plugins::amazon_build::AmazonBuildCommand::ALL
+        .iter()
+        .enumerate()
+    {
+        if command.section() != section {
+            section = command.section();
+            rows.push(Line::raw(format!("  {section}")));
+        }
+        let actual = command.command(Some("PACKAGE")).unwrap_or_default();
+        rows.push(git_selection_line(
+            format!("  {:<30} {}", command.label(), actual),
+            metrics.list.width as usize,
+            index == selected,
+        ));
+    }
+    render_git_body(frame, metrics.list, rows);
+    let command = state.amazon_build.command();
+    render_git_footer(
+        frame,
+        metrics,
+        &format!(
+            "{}  │  Up/Down Select  Enter/F3 Run  Esc Files",
+            command.label()
+        ),
+        &[
+            (1, "---"),
+            (2, "---"),
+            (3, "Run"),
+            (4, "---"),
+            (5, "---"),
+            (6, "---"),
+            (7, "---"),
+            (8, "---"),
+            (9, "---"),
+            (10, "---"),
+            (11, "---"),
+            (12, "---"),
+        ],
     );
 }
 
@@ -2023,6 +2096,7 @@ mod tests {
             mcd: None,
             mcd_operation: None,
             favorites: crate::plugins::favorites::FavoritesState::default(),
+            amazon_build: crate::plugins::amazon_build::AmazonBuildState::default(),
             menu_category: 0,
             menu_item: 0,
             settings_cursor: 0,
@@ -2247,6 +2321,18 @@ mod tests {
     }
 
     #[test]
+    fn amazon_build_is_a_full_screen_command_picker() {
+        let mut state = state_with(Vec::new(), 80, 25);
+        state.screen = Screen::AmazonBuild;
+        let output = rendered(&state, 80, 25);
+        assert!(output.contains("[AMAZON BUILD]"));
+        assert!(output.contains("Brazil Build"));
+        assert!(output.contains("git push"));
+        assert!(output.contains("CR Target Branch"));
+        assert!(output.contains("F3 Run"));
+    }
+
+    #[test]
     fn modified_file_viewer_shows_diff_function_keys() {
         let mut state = state_with(vec![entry("viewer.txt", EntryKind::File, 42)], 80, 25);
         let path = PathBuf::from("/work/viewer.txt");
@@ -2329,6 +2415,7 @@ mod tests {
             mcd: None,
             mcd_operation: None,
             favorites: crate::plugins::favorites::FavoritesState::default(),
+            amazon_build: crate::plugins::amazon_build::AmazonBuildState::default(),
             menu_category: 0,
             menu_item: 0,
             settings_cursor: 0,

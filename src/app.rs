@@ -48,6 +48,7 @@ pub enum Screen {
     ConflictDialog,
     Mcd,
     Favorites,
+    AmazonBuild,
     Menu,
     Settings,
     GitStatus,
@@ -107,6 +108,10 @@ pub enum Action {
     ShowEditor,
     ShowShellCommand,
     ShellCommandFinished(Result<(), String>),
+    ShowAmazonBuild,
+    AmazonBuildMove(i32),
+    AmazonBuildRun,
+    AmazonBuildCommandFinished(Result<(), String>),
     ExternalEditorFinished {
         path: PathBuf,
         result: Result<(), String>,
@@ -321,6 +326,10 @@ pub enum Effect {
         directory: PathBuf,
         command: String,
     },
+    RunAmazonBuildCommand {
+        directory: PathBuf,
+        command: String,
+    },
     SaveFile {
         path: PathBuf,
         contents: Vec<u8>,
@@ -453,6 +462,7 @@ pub struct AppState {
     pub mcd: Option<crate::mcd::tree::DirectoryTree>,
     pub mcd_operation: Option<McdOperation>,
     pub favorites: crate::plugins::favorites::FavoritesState,
+    pub amazon_build: crate::plugins::amazon_build::AmazonBuildState,
     pub menu_category: usize,
     pub menu_item: usize,
     pub settings_cursor: usize,
@@ -516,6 +526,7 @@ impl AppState {
             mcd: None,
             mcd_operation: None,
             favorites: crate::plugins::favorites::FavoritesState::default(),
+            amazon_build: crate::plugins::amazon_build::AmazonBuildState::default(),
             menu_category: 0,
             menu_item: 0,
             settings_cursor: 0,
@@ -1331,6 +1342,41 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             });
             return vec![Effect::LoadDirectory(state.current_path.clone())];
         }
+        Action::ShowAmazonBuild => state.screen = Screen::AmazonBuild,
+        Action::AmazonBuildMove(delta) => state.amazon_build.move_selection(delta),
+        Action::AmazonBuildRun => {
+            let command = state.amazon_build.command();
+            if command.needs_package() {
+                state.input_dialog = Some(InputDialog::new(
+                    command.label(),
+                    "Package name",
+                    "",
+                    if matches!(
+                        command,
+                        crate::plugins::amazon_build::AmazonBuildCommand::AddPackage
+                    ) {
+                        InputPurpose::AmazonAddPackage
+                    } else {
+                        InputPurpose::AmazonRemovePackage
+                    },
+                    None,
+                ));
+                state.screen = Screen::InputDialog;
+            } else if let Ok(command) = command.command(None) {
+                return vec![Effect::RunAmazonBuildCommand {
+                    directory: state.current_path.clone(),
+                    command,
+                }];
+            }
+        }
+        Action::AmazonBuildCommandFinished(result) => {
+            state.screen = Screen::AmazonBuild;
+            state.message = Some(match result {
+                Ok(()) => "Amazon Build command finished.".into(),
+                Err(error) => format!("Amazon Build command failed: {error}"),
+            });
+            return vec![Effect::LoadDirectory(state.current_path.clone())];
+        }
         Action::ExternalEditorFinished { path, result } => {
             state.editor = None;
             state.screen = Screen::Main;
@@ -1495,6 +1541,27 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                             command: value,
                         }];
                     }
+                    InputPurpose::AmazonAddPackage | InputPurpose::AmazonRemovePackage => {
+                        let command = if dialog.purpose == InputPurpose::AmazonAddPackage {
+                            crate::plugins::amazon_build::AmazonBuildCommand::AddPackage
+                        } else {
+                            crate::plugins::amazon_build::AmazonBuildCommand::RemovePackage
+                        };
+                        match command.command(Some(&value)) {
+                            Ok(command) => {
+                                return vec![Effect::RunAmazonBuildCommand {
+                                    directory: state.current_path.clone(),
+                                    command,
+                                }];
+                            }
+                            Err(error) => {
+                                let mut dialog = dialog;
+                                dialog.error = Some(error);
+                                state.input_dialog = Some(dialog);
+                                None
+                            }
+                        }
+                    }
                     InputPurpose::SearchEditor => {
                         if let Some((_, editor)) = &mut state.editor
                             && !editor.find_next(&value)
@@ -1635,6 +1702,12 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             let favorite_confirm = state.confirm_dialog.as_ref().is_some_and(|dialog| {
                 matches!(dialog.operation, ConfirmOperation::FavoriteDelete { .. })
             });
+            let amazon_dialog = state.input_dialog.as_ref().is_some_and(|dialog| {
+                matches!(
+                    dialog.purpose,
+                    InputPurpose::AmazonAddPackage | InputPurpose::AmazonRemovePackage
+                )
+            });
             let git_diff_dialog = state
                 .input_dialog
                 .as_ref()
@@ -1657,6 +1730,8 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 Screen::Mcd
             } else if favorite_dialog || favorite_confirm {
                 Screen::Favorites
+            } else if amazon_dialog {
+                Screen::AmazonBuild
             } else if git_diff_dialog {
                 Screen::GitDiff
             } else if git_commit_dialog {
@@ -2625,6 +2700,7 @@ mod tests {
             mcd: None,
             mcd_operation: None,
             favorites: crate::plugins::favorites::FavoritesState::default(),
+            amazon_build: crate::plugins::amazon_build::AmazonBuildState::default(),
             menu_category: 0,
             menu_item: 0,
             settings_cursor: 0,
@@ -2746,6 +2822,25 @@ mod tests {
         assert_eq!(app.screen, Screen::GitStatus);
         assert!(app.git_diff.is_none());
         assert!(!app.git_diff_side_by_side);
+    }
+
+    #[test]
+    fn amazon_build_runs_commands_in_the_current_directory_and_returns_to_its_view() {
+        let mut app = state();
+        reduce(&mut app, Action::ShowAmazonBuild);
+        assert_eq!(app.screen, Screen::AmazonBuild);
+        assert_eq!(
+            reduce(&mut app, Action::AmazonBuildRun),
+            vec![Effect::RunAmazonBuildCommand {
+                directory: PathBuf::from("/test"),
+                command: "brazil build".into(),
+            }]
+        );
+        assert!(matches!(
+            reduce(&mut app, Action::AmazonBuildCommandFinished(Ok(()))).as_slice(),
+            [Effect::LoadDirectory(path)] if path == Path::new("/test")
+        ));
+        assert_eq!(app.screen, Screen::AmazonBuild);
     }
 
     #[test]

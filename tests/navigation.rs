@@ -218,6 +218,7 @@ fn resize_keeps_the_selected_entry_identity() {
         mcd: None,
         mcd_operation: None,
         favorites: mdir4::plugins::favorites::FavoritesState::default(),
+        amazon_build: mdir4::plugins::amazon_build::AmazonBuildState::default(),
         menu_category: 0,
         menu_item: 0,
         settings_cursor: 0,

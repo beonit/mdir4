@@ -143,6 +143,35 @@ fn control_g_opens_git_status_and_escape_closes_the_plugin_view() {
 }
 
 #[test]
+fn control_b_opens_amazon_build_and_its_keys_run_the_selected_command() {
+    let registry = CommandRegistry::default();
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Main,
+            KeyChord::control(KeyCode::Character('b')),
+            &registry
+        ),
+        Some(Action::ShowAmazonBuild)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::AmazonBuild,
+            KeyChord::plain(KeyCode::Down),
+            &registry
+        ),
+        Some(Action::AmazonBuildMove(1))
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::AmazonBuild,
+            KeyChord::plain(KeyCode::Function(3)),
+            &registry
+        ),
+        Some(Action::AmazonBuildRun)
+    ));
+}
+
+#[test]
 fn escape_clears_selection_on_the_main_screen() {
     assert!(matches!(
         mapper::map_chord(

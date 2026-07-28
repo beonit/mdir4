@@ -11,6 +11,29 @@ pub fn map_key(screen: Screen, event: KeyEvent, registry: &CommandRegistry) -> O
 }
 
 pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) -> Option<Action> {
+    if screen == Screen::Main && chord == KeyChord::control(KeyCode::Character('b')) {
+        return Some(Action::ShowAmazonBuild);
+    }
+    if screen == Screen::AmazonBuild {
+        return match chord {
+            KeyChord {
+                code: KeyCode::Escape,
+                ..
+            } => Some(Action::CloseOverlay),
+            KeyChord {
+                code: KeyCode::Up, ..
+            } => Some(Action::AmazonBuildMove(-1)),
+            KeyChord {
+                code: KeyCode::Down,
+                ..
+            } => Some(Action::AmazonBuildMove(1)),
+            KeyChord {
+                code: KeyCode::Enter | KeyCode::Function(3),
+                ..
+            } => Some(Action::AmazonBuildRun),
+            _ => None,
+        };
+    }
     if screen == Screen::GitStatus {
         if chord.control
             && let KeyCode::Function(number) = chord.code

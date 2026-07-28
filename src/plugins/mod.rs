@@ -1,3 +1,4 @@
+pub mod amazon_build;
 pub mod api;
 pub mod favorites;
 pub mod git;

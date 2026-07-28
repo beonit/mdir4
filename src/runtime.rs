@@ -266,7 +266,11 @@ fn run_loop(
         }
         while let Some(request) = foreground_shell_commands.pop_front() {
             let result = launch_shell_command(session, &request.directory, &request.command)?;
-            actions.push_back(Action::ShellCommandFinished(result));
+            actions.push_back(if request.amazon_build {
+                Action::AmazonBuildCommandFinished(result)
+            } else {
+                Action::ShellCommandFinished(result)
+            });
             dirty = true;
         }
         while let Some(action) = worker.try_action() {
@@ -322,8 +326,18 @@ fn drain_actions(
             match effect {
                 Effect::LoadEditor(path) => foreground_editors.push_back(path),
                 Effect::RunShellCommand { directory, command } => {
-                    foreground_shell_commands.push_back(ShellCommand { directory, command });
+                    foreground_shell_commands.push_back(ShellCommand {
+                        directory,
+                        command,
+                        amazon_build: false,
+                    });
                 }
+                Effect::RunAmazonBuildCommand { directory, command } => foreground_shell_commands
+                    .push_back(ShellCommand {
+                        directory,
+                        command,
+                        amazon_build: true,
+                    }),
                 effect => {
                     if worker.submit(effect).is_err() {
                         state.message = Some("Worker is busy; try again shortly.".to_string());
@@ -339,6 +353,7 @@ fn drain_actions(
 struct ShellCommand {
     directory: PathBuf,
     command: String,
+    amazon_build: bool,
 }
 
 fn launch_shell_command(
@@ -558,6 +573,9 @@ impl EffectWorker {
                     Effect::RunShellCommand { .. } => Action::ShellCommandFinished(Err(
                         "shell commands must run in the foreground".to_string(),
                     )),
+                    Effect::RunAmazonBuildCommand { .. } => Action::AmazonBuildCommandFinished(
+                        Err("Foreground command cannot run in this test worker.".into()),
+                    ),
                     Effect::LoadDirectory(path) => {
                         let result = directory::load_directory(filesystem.as_ref(), &path);
                         Action::DirectoryLoaded { path, result }
@@ -1375,6 +1393,7 @@ mod tests {
             mcd: None,
             mcd_operation: None,
             favorites: crate::plugins::favorites::FavoritesState::default(),
+            amazon_build: crate::plugins::amazon_build::AmazonBuildState::default(),
             menu_category: 0,
             menu_item: 0,
             settings_cursor: 0,
