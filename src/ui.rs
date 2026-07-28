@@ -939,22 +939,37 @@ fn render_amazon_build_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &L
     let selected = state.amazon_build.selected();
     let mut rows = Vec::new();
     let mut section = "";
+    let mut selected_row = 0;
     for (index, command) in crate::plugins::amazon_build::AmazonBuildCommand::ALL
         .iter()
         .enumerate()
     {
         if command.section() != section {
+            if !section.is_empty() {
+                rows.push(Line::raw(""));
+            }
             section = command.section();
             rows.push(Line::raw(format!("  {section}")));
         }
         let actual = command.command(Some("PACKAGE")).unwrap_or_default();
+        if index == selected {
+            selected_row = rows.len();
+        }
         rows.push(git_selection_line(
             format!("  {:<30} {}", command.label(), actual),
             metrics.list.width as usize,
             index == selected,
         ));
     }
-    render_git_body(frame, metrics.list, rows);
+    let start = page_start(selected_row, metrics.list.height as usize);
+    render_git_body(
+        frame,
+        metrics.list,
+        rows.into_iter()
+            .skip(start)
+            .take(metrics.list.height as usize)
+            .collect(),
+    );
     let command = state.amazon_build.command();
     render_git_footer(
         frame,
@@ -2328,8 +2343,13 @@ mod tests {
         assert!(output.contains("[AMAZON BUILD]"));
         assert!(output.contains("Brazil Build"));
         assert!(output.contains("git push"));
-        assert!(output.contains("CR Target Branch"));
         assert!(output.contains("F3 Run"));
+
+        for _ in 0..14 {
+            state.amazon_build.move_selection(1);
+        }
+        let output = rendered(&state, 80, 25);
+        assert!(output.contains("CR Target Branch"));
     }
 
     #[test]
