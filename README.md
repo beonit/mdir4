@@ -4,7 +4,7 @@ Mdir4 is a fast, keyboard-first terminal file manager inspired by Mdir III. It b
 dense classic file-manager workflow to modern macOS and Linux terminals while keeping
 navigation, file operations, and project tooling close at hand.
 
-![Mdir4 browsing a source tree](docs/images/mdir4-source-tree.png)
+![Mdir4 browsing a project directory](docs/images/mdir4.png)
 
 ## Highlights
 
