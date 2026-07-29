@@ -7,6 +7,7 @@ pub mod command_registry;
 
 #[derive(Debug, Clone)]
 pub struct SettingsDraft {
+    pub preview_enabled: bool,
     pub long_view: bool,
     pub show_hidden: bool,
     pub theme: String,
@@ -130,6 +131,21 @@ pub enum Action {
         path: PathBuf,
         result: Result<Vec<u8>, FsError>,
     },
+    PreviewLoaded {
+        path: PathBuf,
+        generation: u64,
+        result: Result<Vec<u8>, FsError>,
+    },
+    PreviewDiffLoaded {
+        path: PathBuf,
+        generation: u64,
+        result: Result<String, String>,
+    },
+    RemotePreviewLoaded {
+        path: PathBuf,
+        generation: u64,
+        result: Result<Vec<u8>, crate::remote::backend::RemoteReadError>,
+    },
     ViewerLine(i32),
     ViewerPage(i32),
     ShowViewerSearch,
@@ -233,10 +249,15 @@ pub enum Action {
     GitStatusLoaded {
         result: Result<Vec<crate::plugins::git::model::GitStatusRow>, String>,
     },
+    GitStatusPreviewLoaded {
+        path: crate::plugins::git::model::RepoRelativePath,
+        result: Result<String, String>,
+    },
     GitStatusMove(i32),
     GitStatusPage(i32),
     GitStatusHome,
     GitStatusEnd,
+    GitStatusPreviewToggleSideBySide,
     GitStatusToggleMark,
     GitStage,
     GitUnstage,
@@ -307,6 +328,7 @@ pub enum Action {
     SettingsMove(i32),
     SettingsChange(i32),
     ApplySettings,
+    PreviewWidthAdjust(i8),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -322,6 +344,21 @@ pub enum Effect {
     },
     CreateDirectory(PathBuf),
     LoadViewer(PathBuf),
+    LoadPreview {
+        path: PathBuf,
+        generation: u64,
+    },
+    LoadPreviewDiff {
+        directory: PathBuf,
+        path: PathBuf,
+        generation: u64,
+    },
+    LoadRemotePreview {
+        alias: crate::remote::openssh_hosts::SshHostAlias,
+        path: crate::remote::location::RemotePath,
+        display_path: PathBuf,
+        generation: u64,
+    },
     LoadEditor(PathBuf),
     RunShellCommand {
         directory: PathBuf,
@@ -368,6 +405,10 @@ pub enum Effect {
         config: crate::config::Config,
     },
     LoadGitStatus(PathBuf),
+    LoadGitStatusPreview {
+        directory: PathBuf,
+        path: crate::plugins::git::model::RepoRelativePath,
+    },
     LoadGitDiff {
         directory: PathBuf,
         path: crate::plugins::git::model::RepoRelativePath,
@@ -452,6 +493,8 @@ pub struct AppState {
     pub input_dialog: Option<InputDialog>,
     pub confirm_dialog: Option<ConfirmDialog>,
     pub viewer: Option<(PathBuf, ViewerState)>,
+    pub preview: Option<(PathBuf, u64, ViewerState)>,
+    pub preview_generation: u64,
     pub editor: Option<(PathBuf, EditorBuffer)>,
     pub sort_key: SortKey,
     pub sort_direction: SortDirection,
@@ -479,6 +522,8 @@ pub struct AppState {
     pub plugin_decorations: BTreeMap<String, crate::plugins::api::FileDecoration>,
     pub git_modified_paths: HashSet<PathBuf>,
     pub git_status_view: Option<crate::plugins::git::status_view::GitStatusViewState>,
+    pub git_status_preview: Option<(crate::plugins::git::model::RepoRelativePath, ViewerState)>,
+    pub git_status_preview_side_by_side: bool,
     pub git_diff: Option<(PathBuf, ViewerState)>,
     pub git_diff_side_by_side: bool,
     pub git_diff_origin: GitDiffOrigin,
@@ -518,6 +563,8 @@ impl AppState {
             input_dialog: None,
             confirm_dialog: None,
             viewer: None,
+            preview: None,
+            preview_generation: 0,
             editor: None,
             sort_key: SortKey::Name,
             sort_direction: SortDirection::Ascending,
@@ -545,6 +592,8 @@ impl AppState {
             plugin_decorations: BTreeMap::new(),
             git_modified_paths: HashSet::new(),
             git_status_view: None,
+            git_status_preview: None,
+            git_status_preview_side_by_side: false,
             git_diff: None,
             git_diff_side_by_side: false,
             git_diff_origin: GitDiffOrigin::default(),
@@ -612,6 +661,13 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             return vec![Effect::LoadDirectory(state.current_path.clone())];
         }
         Action::Resize(viewport) => state.viewport = viewport,
+        Action::PreviewWidthAdjust(delta) => {
+            let current = state.layout_settings.preview.width_percent as i16;
+            let next = (current + i16::from(delta) * 5).clamp(35, 65) as u8;
+            state.layout_settings.preview.width_percent = next;
+            state.persisted_config.preview.width_percent = next;
+            state.message = Some(format!("Preview width: {next}%"));
+        }
         Action::DirectoryLoaded { path, result } => match result {
             Ok(listing) => {
                 let attention = state
@@ -660,10 +716,14 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                             .is_some_and(|role| role.as_str().starts_with("plugin.git."))
                     })
                 });
-                return vec![
+                let mut effects = vec![
                     Effect::LoadDiskInfo(state.current_path.clone()),
                     Effect::LoadDirectoryGitStatus(state.current_path.clone()),
                 ];
+                if let Some(effect) = begin_preview(state) {
+                    effects.push(effect);
+                }
+                return effects;
             }
             Err(error) => {
                 state.message = Some(format!("Could not open directory: {error}"));
@@ -757,6 +817,9 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             );
             state.selected =
                 layout::move_cursor(state.selected, state.entries.len(), direction, &metrics);
+            if let Some(effect) = begin_preview(state) {
+                return vec![effect];
+            }
         }
         Action::Page(direction) => {
             let metrics = layout::calculate_for_view(
@@ -767,9 +830,22 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             );
             state.selected =
                 layout::move_page(state.selected, state.entries.len(), direction, &metrics);
+            if let Some(effect) = begin_preview(state) {
+                return vec![effect];
+            }
         }
-        Action::Home => state.selected = 0,
-        Action::End => state.selected = state.entries.len().saturating_sub(1),
+        Action::Home => {
+            state.selected = 0;
+            if let Some(effect) = begin_preview(state) {
+                return vec![effect];
+            }
+        }
+        Action::End => {
+            state.selected = state.entries.len().saturating_sub(1);
+            if let Some(effect) = begin_preview(state) {
+                return vec![effect];
+            }
+        }
         Action::ToggleMark => toggle_current_mark(state),
         Action::ToggleMarkAndAdvance => {
             toggle_current_mark(state);
@@ -870,28 +946,57 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             }
         }
         Action::GitStatusLoaded { result } => match result {
-            Ok(rows) => state.git_status_view.get_or_insert_default().refresh(rows),
+            Ok(rows) => {
+                state.git_status_view.get_or_insert_default().refresh(rows);
+                if let Some(effect) = begin_git_status_preview(state) {
+                    return vec![effect];
+                }
+            }
             Err(message) => state.message = Some(message),
         },
         Action::GitStatusMove(delta) => {
             if let Some(view) = &mut state.git_status_view {
                 view.move_selection(delta);
             }
+            if let Some(effect) = begin_git_status_preview(state) {
+                return vec![effect];
+            }
         }
         Action::GitStatusPage(delta) => {
             if let Some(view) = &mut state.git_status_view {
                 view.page_selection(delta, state.viewport.height.saturating_sub(4) as usize);
+            }
+            if let Some(effect) = begin_git_status_preview(state) {
+                return vec![effect];
             }
         }
         Action::GitStatusHome => {
             if let Some(view) = &mut state.git_status_view {
                 view.select_home();
             }
+            if let Some(effect) = begin_git_status_preview(state) {
+                return vec![effect];
+            }
         }
         Action::GitStatusEnd => {
             if let Some(view) = &mut state.git_status_view {
                 view.select_end();
             }
+            if let Some(effect) = begin_git_status_preview(state) {
+                return vec![effect];
+            }
+        }
+        Action::GitStatusPreviewToggleSideBySide => {
+            state.git_status_preview_side_by_side = !state.git_status_preview_side_by_side;
+        }
+        Action::GitStatusPreviewLoaded { path, result } => {
+            state.git_status_preview = Some((
+                path,
+                match result {
+                    Ok(diff) => ViewerState::decode(diff.into_bytes()),
+                    Err(error) => ViewerState::Error(error),
+                },
+            ));
         }
         Action::GitStatusToggleMark => {
             if let Some(view) = &mut state.git_status_view {
@@ -1813,6 +1918,78 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 ));
             }
         }
+        Action::PreviewLoaded {
+            path,
+            generation,
+            result,
+        } => {
+            if generation == state.preview_generation
+                && state
+                    .preview
+                    .as_ref()
+                    .is_some_and(|(current, current_generation, _)| {
+                        current == &path && *current_generation == generation
+                    })
+            {
+                let content = match result {
+                    Ok(bytes) => ViewerState::decode(bytes),
+                    Err(FsError::TooLarge { .. }) => ViewerState::TooLarge,
+                    Err(error) => ViewerState::Error(error.to_string()),
+                };
+                state.preview = Some((path.clone(), generation, content));
+                if state.git_modified_paths.contains(&path)
+                    && state
+                        .preview
+                        .as_ref()
+                        .is_some_and(|(_, _, content)| matches!(content, ViewerState::Ready(_)))
+                {
+                    return vec![Effect::LoadPreviewDiff {
+                        directory: state.current_path.clone(),
+                        path,
+                        generation,
+                    }];
+                }
+            }
+        }
+        Action::PreviewDiffLoaded {
+            path,
+            generation,
+            result,
+        } => {
+            if generation == state.preview_generation
+                && state
+                    .preview
+                    .as_ref()
+                    .is_some_and(|(current, current_generation, _)| {
+                        current == &path && *current_generation == generation
+                    })
+                && let Ok(diff) = result
+                && !diff.is_empty()
+            {
+                state.preview = Some((path, generation, ViewerState::decode(diff.into_bytes())));
+            }
+        }
+        Action::RemotePreviewLoaded {
+            path,
+            generation,
+            result,
+        } => {
+            if generation == state.preview_generation
+                && state
+                    .preview
+                    .as_ref()
+                    .is_some_and(|(current, current_generation, _)| {
+                        current == &path && *current_generation == generation
+                    })
+            {
+                let content = match result {
+                    Ok(bytes) => ViewerState::decode(bytes),
+                    Err(crate::remote::backend::RemoteReadError::TooLarge) => ViewerState::TooLarge,
+                    Err(error) => ViewerState::Error(error.message().into()),
+                };
+                state.preview = Some((path, generation, content));
+            }
+        }
         action @ (Action::ViewerLine(delta) | Action::ViewerPage(delta)) => {
             if let Some((_, ViewerState::Ready(document))) = &mut state.viewer {
                 let amount = if matches!(action, Action::ViewerPage(_)) {
@@ -2259,6 +2436,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
         Action::ShowSettings => {
             state.settings_preview = Some(SettingsDraft {
+                preview_enabled: state.layout_settings.preview.enabled,
                 long_view: state.long_view,
                 show_hidden: state.show_hidden,
                 theme: state.theme.name.clone(),
@@ -2275,7 +2453,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.settings_cursor = if delta < 0 {
                 state.settings_cursor.saturating_sub(1)
             } else {
-                (state.settings_cursor + 1).min(1)
+                (state.settings_cursor + 1).min(2)
             };
         }
         Action::SettingsChange(delta) => {
@@ -2295,6 +2473,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                             draft.sort_key.next()
                         }
                     }
+                    2 => draft.preview_enabled = !draft.preview_enabled,
                     _ => unreachable!("settings cursor is limited to visible options"),
                 }
             }
@@ -2307,6 +2486,8 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 state.sort_direction = draft.sort_direction;
                 sort_entries(&mut state.entries, state.sort_key, state.sort_direction);
                 state.persisted_config.columns.count = draft.column_count;
+                state.persisted_config.preview.enabled = draft.preview_enabled;
+                state.layout_settings.preview.enabled = draft.preview_enabled;
                 state.persisted_config.columns.width = draft.column_width;
                 state.layout_settings.column_count = draft
                     .column_count
@@ -2462,6 +2643,9 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 view.selected =
                     layout::move_cursor(view.selected, view.entries.len(), direction, &metrics);
             }
+            if let Some(effect) = begin_remote_preview(state) {
+                return vec![effect];
+            }
         }
         Action::RemotePage(direction) => {
             if let Some(view) = state.remote_view.as_mut() {
@@ -2473,15 +2657,24 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 view.selected =
                     layout::move_page(view.selected, view.entries.len(), direction, &metrics);
             }
+            if let Some(effect) = begin_remote_preview(state) {
+                return vec![effect];
+            }
         }
         Action::RemoteHome => {
             if let Some(view) = state.remote_view.as_mut() {
                 view.selected = 0;
             }
+            if let Some(effect) = begin_remote_preview(state) {
+                return vec![effect];
+            }
         }
         Action::RemoteEnd => {
             if let Some(view) = state.remote_view.as_mut() {
                 view.selected = view.entries.len().saturating_sub(1);
+            }
+            if let Some(effect) = begin_remote_preview(state) {
+                return vec![effect];
             }
         }
         Action::RemoteOpen => {
@@ -2668,6 +2861,8 @@ pub fn config_from_state(state: &AppState) -> crate::config::Config {
         crate::config::schema::ViewMode::Short
     };
     config.show_hidden = state.show_hidden;
+    config.preview.enabled = state.layout_settings.preview.enabled;
+    config.preview.width_percent = state.layout_settings.preview.width_percent;
     config.theme = state.theme.name.clone();
     state.favorites.write_plugin_config(
         config
@@ -2683,6 +2878,75 @@ pub fn config_from_state(state: &AppState) -> crate::config::Config {
 fn toggle_current_mark(state: &mut AppState) {
     let entry = state.selected_entry().cloned();
     selection::toggle(&mut state.marked, entry.as_ref());
+}
+
+fn begin_preview(state: &mut AppState) -> Option<Effect> {
+    if !state.layout_settings.preview.enabled
+        || state.viewport.width < crate::layout::MIN_PREVIEW_WIDTH
+    {
+        return None;
+    }
+    let entry = state.selected_entry()?;
+    if entry.kind != EntryKind::File {
+        return None;
+    }
+    let path = entry.path.clone();
+    state.preview_generation = state.preview_generation.wrapping_add(1);
+    let generation = state.preview_generation;
+    state.preview = Some((
+        path.clone(),
+        generation,
+        ViewerState::Loading { generation },
+    ));
+    Some(Effect::LoadPreview { path, generation })
+}
+
+fn begin_remote_preview(state: &mut AppState) -> Option<Effect> {
+    if !state.layout_settings.preview.enabled
+        || state.viewport.width < crate::layout::MIN_PREVIEW_WIDTH
+    {
+        return None;
+    }
+    let view = state.remote_view.as_ref()?;
+    let entry = view.entries.get(view.selected)?;
+    if entry.kind != crate::remote::backend::RemoteEntryKind::File {
+        return None;
+    }
+    let path = view.path.join(entry.name.as_bytes()).ok()?;
+    let display_path = PathBuf::from(path.display().to_string());
+    state.preview_generation = state.preview_generation.wrapping_add(1);
+    let generation = state.preview_generation;
+    state.preview = Some((
+        display_path.clone(),
+        generation,
+        ViewerState::Loading { generation },
+    ));
+    Some(Effect::LoadRemotePreview {
+        alias: view.alias.clone(),
+        path,
+        display_path,
+        generation,
+    })
+}
+
+fn begin_git_status_preview(state: &mut AppState) -> Option<Effect> {
+    if !state.layout_settings.preview.enabled
+        || state.viewport.width < crate::layout::MIN_PREVIEW_WIDTH
+    {
+        return None;
+    }
+    let path = state
+        .git_status_view
+        .as_ref()?
+        .rows
+        .get(state.git_status_view.as_ref()?.selected)?
+        .path
+        .clone();
+    state.git_status_preview = Some((path.clone(), ViewerState::Loading { generation: 1 }));
+    Some(Effect::LoadGitStatusPreview {
+        directory: state.current_path.clone(),
+        path,
+    })
 }
 
 fn parent_of(path: &Path) -> Option<PathBuf> {
@@ -2722,6 +2986,8 @@ mod tests {
             input_dialog: None,
             confirm_dialog: None,
             viewer: None,
+            preview: None,
+            preview_generation: 0,
             editor: None,
             sort_key: SortKey::Name,
             sort_direction: SortDirection::Ascending,
@@ -2749,6 +3015,8 @@ mod tests {
             plugin_decorations: BTreeMap::new(),
             git_modified_paths: HashSet::new(),
             git_status_view: None,
+            git_status_preview: None,
+            git_status_preview_side_by_side: false,
             git_diff: None,
             git_diff_side_by_side: false,
             git_diff_origin: GitDiffOrigin::default(),

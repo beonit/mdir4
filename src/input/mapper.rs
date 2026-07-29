@@ -11,6 +11,13 @@ pub fn map_key(screen: Screen, event: KeyEvent, registry: &CommandRegistry) -> O
 }
 
 pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) -> Option<Action> {
+    if matches!(screen, Screen::Main | Screen::Remote)
+        && chord.alt
+        && !chord.control
+        && let Some(action) = registry.action_for(chord)
+    {
+        return Some(action);
+    }
     if screen == Screen::Main && chord == KeyChord::plain(KeyCode::Character('.')) {
         return Some(Action::GoParent);
     }
@@ -73,6 +80,10 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
             KeyChord {
                 code: KeyCode::End, ..
             } => Some(Action::GitStatusEnd),
+            KeyChord {
+                code: KeyCode::Function(4),
+                ..
+            } => Some(Action::GitStatusPreviewToggleSideBySide),
             KeyChord {
                 code: KeyCode::Character(' '),
                 control: false,

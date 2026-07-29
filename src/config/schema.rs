@@ -9,6 +9,7 @@ pub struct Config {
     pub last_path: Option<PathBuf>,
     pub view: ViewMode,
     pub columns: ColumnConfig,
+    pub preview: PreviewConfig,
     pub sort: SortConfig,
     pub show_hidden: bool,
     pub theme: String,
@@ -24,6 +25,7 @@ impl Default for Config {
             last_path: None,
             view: ViewMode::Short,
             columns: ColumnConfig::default(),
+            preview: PreviewConfig::default(),
             sort: SortConfig::default(),
             show_hidden: true,
             theme: "classic".to_string(),
@@ -58,6 +60,22 @@ pub enum ViewMode {
 pub struct ColumnConfig {
     pub count: Option<u8>,
     pub width: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PreviewConfig {
+    pub enabled: bool,
+    pub width_percent: u8,
+}
+
+impl Default for PreviewConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            width_percent: 50,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

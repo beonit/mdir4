@@ -115,6 +115,7 @@ pub enum RemoteReadError {
     PermissionDenied,
     ConnectionLost,
     Protocol,
+    TooLarge,
 }
 
 impl RemoteReadError {
@@ -124,12 +125,16 @@ impl RemoteReadError {
             Self::PermissionDenied => "Remote directory permission was denied.",
             Self::ConnectionLost => "Remote connection was lost.",
             Self::Protocol => "Remote server returned an invalid directory listing.",
+            Self::TooLarge => "Remote file is too large for preview.",
         }
     }
 }
 
 pub trait RemoteReadBackend: Send + Sync {
     fn read_dir(&self, path: &RemotePath) -> Result<RemoteDirectoryListing, RemoteReadError>;
+    fn read_file(&self, _path: &RemotePath, _max_bytes: usize) -> Result<Vec<u8>, RemoteReadError> {
+        Err(RemoteReadError::Protocol)
+    }
 }
 
 #[cfg(test)]

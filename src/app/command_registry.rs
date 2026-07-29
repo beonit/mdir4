@@ -50,6 +50,8 @@ pub enum CommandId {
     ToggleView,
     Settings,
     GitStatus,
+    PreviewWidthDecrease,
+    PreviewWidthIncrease,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,6 +199,30 @@ impl Default for CommandRegistry {
                     shift: false,
                 },
                 "Git Status",
+                None,
+                true,
+            ),
+            command(
+                Id::PreviewWidthDecrease,
+                KeyChord {
+                    code: Key::Character('['),
+                    control: false,
+                    alt: true,
+                    shift: false,
+                },
+                "Preview Narrower",
+                None,
+                true,
+            ),
+            command(
+                Id::PreviewWidthIncrease,
+                KeyChord {
+                    code: Key::Character(']'),
+                    control: false,
+                    alt: true,
+                    shift: false,
+                },
+                "Preview Wider",
                 None,
                 true,
             ),
@@ -461,6 +487,8 @@ fn command_id(name: &str) -> Option<CommandId> {
             "toggleview" => ToggleView,
             "settings" => Settings,
             "gitstatus" => GitStatus,
+            "previewwidthdecrease" | "previewnarrower" => PreviewWidthDecrease,
+            "previewwidthincrease" | "previewwider" => PreviewWidthIncrease,
             _ => return None,
         },
     )
@@ -536,6 +564,8 @@ fn action(id: CommandId) -> Action {
         CommandId::ToggleView => Action::ToggleView,
         CommandId::Settings => Action::ShowSettings,
         CommandId::GitStatus => Action::ShowGitStatus,
+        CommandId::PreviewWidthDecrease => Action::PreviewWidthAdjust(-1),
+        CommandId::PreviewWidthIncrease => Action::PreviewWidthAdjust(1),
     }
 }
 

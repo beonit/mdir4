@@ -16,10 +16,13 @@ use super::{
 const SFTP_INIT: u8 = 1;
 const SFTP_VERSION: u8 = 2;
 const SFTP_CLOSE: u8 = 4;
+const SFTP_OPEN: u8 = 3;
+const SFTP_READ: u8 = 5;
 const SFTP_OPENDIR: u8 = 11;
 const SFTP_READDIR: u8 = 12;
 const SFTP_HANDLE: u8 = 102;
 const SFTP_NAME: u8 = 104;
+const SFTP_DATA: u8 = 103;
 const SFTP_STATUS: u8 = 101;
 const SFTP_STATUS_EOF: u32 = 1;
 const MAX_SFTP_PACKET_BYTES: usize = 16 * 1024 * 1024;
@@ -68,6 +71,10 @@ impl OpenSshSftpSession {
 impl RemoteReadBackend for OpenSshSftpSession {
     fn read_dir(&self, path: &RemotePath) -> Result<RemoteDirectoryListing, RemoteReadError> {
         self.connector.read_dir(&self.alias, path)
+    }
+
+    fn read_file(&self, path: &RemotePath, max_bytes: usize) -> Result<Vec<u8>, RemoteReadError> {
+        self.connector.read_file(&self.alias, path, max_bytes)
     }
 }
 
@@ -123,6 +130,101 @@ impl OpenSshSftpConnector {
         }
         result
     }
+
+    pub fn read_file(
+        &self,
+        alias: &SshHostAlias,
+        path: &RemotePath,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, RemoteReadError> {
+        let mut child = Command::new("ssh")
+            .args([
+                "-oBatchMode=yes",
+                "-oConnectTimeout=15",
+                "-s",
+                alias.as_str(),
+                "sftp",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| RemoteReadError::ConnectionLost)?;
+        let mut stdin = child.stdin.take().ok_or(RemoteReadError::ConnectionLost)?;
+        let mut stdout = child.stdout.take().ok_or(RemoteReadError::ConnectionLost)?;
+        let result = read_file_protocol(&mut stdin, &mut stdout, path, max_bytes);
+        drop(stdin);
+        let status = child.wait().map_err(|_| RemoteReadError::ConnectionLost)?;
+        if !status.success() {
+            return Err(RemoteReadError::ConnectionLost);
+        }
+        result
+    }
+}
+
+fn read_file_protocol(
+    writer: &mut impl Write,
+    reader: &mut impl Read,
+    path: &RemotePath,
+    max_bytes: usize,
+) -> Result<Vec<u8>, RemoteReadError> {
+    send_packet(writer, SFTP_INIT, &3u32.to_be_bytes())?;
+    if read_packet(reader)?.0 != SFTP_VERSION {
+        return Err(RemoteReadError::Protocol);
+    }
+    let mut open = 1u32.to_be_bytes().to_vec();
+    push_string(&mut open, path.as_bytes())?;
+    open.extend_from_slice(&1u32.to_be_bytes());
+    open.extend_from_slice(&0u32.to_be_bytes());
+    send_packet(writer, SFTP_OPEN, &open)?;
+    let (kind, payload) = read_packet(reader)?;
+    if kind != SFTP_HANDLE || read_u32(&payload, 0)? != 1 {
+        return Err(RemoteReadError::ConnectionLost);
+    }
+    let handle = read_string(&payload, 4)?.0.to_vec();
+    let result = (|| {
+        let mut bytes = Vec::new();
+        let mut offset = 0u64;
+        loop {
+            let remaining = max_bytes
+                .saturating_add(1)
+                .saturating_sub(bytes.len())
+                .min(32 * 1024);
+            let mut request = 2u32.to_be_bytes().to_vec();
+            push_string(&mut request, &handle)?;
+            request.extend_from_slice(&offset.to_be_bytes());
+            request.extend_from_slice(&(remaining as u32).to_be_bytes());
+            send_packet(writer, SFTP_READ, &request)?;
+            let (kind, payload) = read_packet(reader)?;
+            if kind == SFTP_STATUS {
+                if parse_status(&payload, 2)? == SFTP_STATUS_EOF {
+                    break;
+                }
+                return Err(RemoteReadError::ConnectionLost);
+            }
+            if kind != SFTP_DATA || read_u32(&payload, 0)? != 2 {
+                return Err(RemoteReadError::Protocol);
+            }
+            let data = read_string(&payload, 4)?.0;
+            if data.is_empty() {
+                break;
+            }
+            bytes.extend_from_slice(data);
+            if bytes.len() > max_bytes {
+                return Err(RemoteReadError::TooLarge);
+            }
+            offset = offset.saturating_add(data.len() as u64);
+        }
+        Ok(bytes)
+    })();
+    let mut close = 3u32.to_be_bytes().to_vec();
+    push_string(&mut close, &handle)?;
+    send_packet(writer, SFTP_CLOSE, &close)?;
+    let (kind, payload) = read_packet(reader)?;
+    if kind != SFTP_STATUS || parse_status(&payload, 3)? != 0 {
+        return Err(RemoteReadError::ConnectionLost);
+    }
+    result
 }
 
 impl SftpConnector for OpenSshSftpConnector {

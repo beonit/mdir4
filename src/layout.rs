@@ -11,6 +11,7 @@ pub use navigation::{
 pub const MIN_WIDTH: u16 = 60;
 pub const MIN_HEIGHT: u16 = 15;
 pub const SINGLE_ROW_FUNCTION_WIDTH: u16 = 96;
+pub const MIN_PREVIEW_WIDTH: u16 = 120;
 const MIN_COLUMN_WIDTH: u16 = 12;
 const MAX_COLUMNS: u16 = 6;
 /// Two Long-view columns need room for a name, size, and date in each column.
@@ -47,6 +48,22 @@ impl ColumnWidthMode {
 pub struct LayoutSettings {
     pub column_count: ColumnCountMode,
     pub column_width: ColumnWidthMode,
+    pub preview: PreviewLayoutSettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreviewLayoutSettings {
+    pub enabled: bool,
+    pub width_percent: u8,
+}
+
+impl Default for PreviewLayoutSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            width_percent: 50,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -58,6 +75,7 @@ pub struct Viewport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutMetrics {
     pub viewport: Rect,
+    pub preview: Option<Rect>,
     pub path_bar: Rect,
     pub list: Rect,
     pub item_detail: Rect,
@@ -75,6 +93,7 @@ pub fn calculate(viewport: Viewport, settings: LayoutSettings) -> LayoutMetrics 
     if viewport.width < MIN_WIDTH || viewport.height < MIN_HEIGHT {
         return LayoutMetrics {
             viewport: full,
+            preview: None,
             path_bar: Rect::default(),
             list: Rect::default(),
             item_detail: Rect::default(),
@@ -88,26 +107,34 @@ pub fn calculate(viewport: Viewport, settings: LayoutSettings) -> LayoutMetrics 
         };
     }
 
+    let preview_width =
+        (settings.preview.enabled && viewport.width >= MIN_PREVIEW_WIDTH).then(|| {
+            let requested =
+                viewport.width * u16::from(settings.preview.width_percent.clamp(35, 65)) / 100;
+            requested.clamp(60, viewport.width.saturating_sub(60))
+        });
+    let browser_width = preview_width.map_or(viewport.width, |width| viewport.width - width);
     let function_rows = if viewport.width >= SINGLE_ROW_FUNCTION_WIDTH {
         1
     } else {
         2
     };
     let list_height = viewport.height - 2 - function_rows;
-    let list = Rect::new(0, 1, viewport.width, list_height);
+    let list = Rect::new(0, 1, browser_width, list_height);
+    let preview = preview_width.map(|width| Rect::new(browser_width, list.y, width, list.height));
     let mut column_count = match settings.column_count {
         ColumnCountMode::Auto => {
             let target_width = settings.column_width.target_width();
-            ((viewport.width + target_width / 2) / target_width).clamp(1, MAX_COLUMNS)
+            ((browser_width + target_width / 2) / target_width).clamp(1, MAX_COLUMNS)
         }
         ColumnCountMode::Fixed(count) => u16::from(count).clamp(1, MAX_COLUMNS),
     };
-    while column_count > 1 && viewport.width / column_count < MIN_COLUMN_WIDTH {
+    while column_count > 1 && browser_width / column_count < MIN_COLUMN_WIDTH {
         column_count -= 1;
     }
 
-    let base_width = viewport.width / column_count;
-    let remainder = viewport.width % column_count;
+    let base_width = browser_width / column_count;
+    let remainder = browser_width % column_count;
     let mut x = 0;
     let mut columns = Vec::with_capacity(column_count as usize);
     for index in 0..column_count {
@@ -121,6 +148,7 @@ pub fn calculate(viewport: Viewport, settings: LayoutSettings) -> LayoutMetrics 
 
     LayoutMetrics {
         viewport: full,
+        preview,
         path_bar: Rect::new(0, 0, viewport.width, 1),
         list,
         item_detail: Rect::new(0, viewport.height - function_rows - 1, viewport.width, 1),
@@ -165,11 +193,12 @@ pub fn calculate_for_view(
         balance_visible_rows(&mut metrics, entry_count);
         return metrics;
     }
-    let minimum_columns = if viewport.width >= MIN_TWO_COLUMN_WIDTH && metrics.columns.len() >= 2 {
-        2
-    } else {
-        1
-    };
+    let minimum_columns =
+        if metrics.list.width >= MIN_TWO_COLUMN_WIDTH && metrics.columns.len() >= 2 {
+            2
+        } else {
+            1
+        };
     let required = entry_count
         .max(1)
         .div_ceil(metrics.rows_per_column)
@@ -219,6 +248,7 @@ mod tests {
         LayoutSettings {
             column_count,
             column_width,
+            ..LayoutSettings::default()
         }
     }
 

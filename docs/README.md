@@ -74,6 +74,12 @@ M4 이후 backlog에는 MCD viewport, 외부 `$EDITOR` 연결, Rename 중간 커
 | [`ADR-003`](architecture/adr-003-worker-model.md) | v1 Core Local 단일 worker |
 | [`ADR-004`](architecture/adr-004-built-in-plugin-boundary.md) | post-v1 built-in plugin 경계 |
 | [`ADR-005`](architecture/adr-005-background-work-lanes.md) | M2/Git/Remote bounded lane, mutation lease, cancel/lifecycle |
+| [`ADR-006`](architecture/adr-006-remote-location-foundation.md) | Remote Location identity와 SFTP 기반 경계 |
+| [`ADR-007`](architecture/adr-007-adaptive-preview-pane.md) | 넓은 Main/Remote 화면의 적응형 Preview pane |
+
+제안된 Preview pane의 설계 적용 순서와 카드별 완료 조건은
+[`preview-pane-implementation-plan.md`](preview-pane-implementation-plan.md)에 있다. 이 트랙은
+승인 전까지 현재 활성 `R1-02` 작업을 선점하지 않는다.
 
 | 문서 | 역할 | 규범성 |
 |---|---|---|

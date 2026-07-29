@@ -232,6 +232,7 @@ fn render_remote(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetric
             (12, "Locations"),
         ],
     );
+    render_preview_placeholder(frame, state, metrics);
 }
 
 fn render_git_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
@@ -274,7 +275,12 @@ fn render_git_status(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMe
             metrics.list,
             vec![Line::raw("Loading Git status...")],
         );
-        render_git_footer(frame, metrics, "Esc Return to files", &git_status_keys());
+        render_git_footer(
+            frame,
+            metrics,
+            "Esc Return to files",
+            &git_status_keys(false),
+        );
         return;
     };
     let capacity = metrics.list.height as usize;
@@ -330,6 +336,7 @@ fn render_git_status(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMe
         })
         .collect();
     render_git_body(frame, metrics.list, rows);
+    render_git_status_preview(frame, state, metrics);
     let selected = view
         .rows
         .get(view.selected)
@@ -339,7 +346,39 @@ fn render_git_status(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMe
         frame,
         metrics,
         &format!("{selected}  │  Esc Files"),
-        &git_status_keys(),
+        &git_status_keys(state.git_status_preview_side_by_side),
+    );
+}
+
+fn render_git_status_preview(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
+    let Some(area) = metrics.preview else {
+        return;
+    };
+    if state.git_status_preview_side_by_side
+        && let Some((_, crate::model::viewer::ViewerState::Ready(document))) =
+            &state.git_status_preview
+    {
+        frame.render_widget(
+            Paragraph::new(side_by_side_diff_rows(document, area.width as usize)).block(
+                Block::default()
+                    .title(" Diff side-by-side ")
+                    .borders(Borders::LEFT),
+            ),
+            area,
+        );
+        return;
+    }
+    let text = match state.git_status_preview.as_ref().map(|(_, viewer)| viewer) {
+        Some(crate::model::viewer::ViewerState::Ready(document)) => document.text.clone(),
+        Some(crate::model::viewer::ViewerState::Loading { .. }) => "Loading diff...".into(),
+        Some(crate::model::viewer::ViewerState::Error(error)) => {
+            format!("Diff unavailable: {error}")
+        }
+        _ => "No diff available.".into(),
+    };
+    frame.render_widget(
+        Paragraph::new(text).block(Block::default().title(" Diff ").borders(Borders::LEFT)),
+        area,
     );
 }
 
@@ -672,12 +711,12 @@ fn render_git_footer(
     render_function_bar(frame, metrics.function_bar, keys);
 }
 
-fn git_status_keys() -> [(u8, &'static str); 12] {
+fn git_status_keys(side_by_side: bool) -> [(u8, &'static str); 12] {
     [
         (1, "Help"),
         (2, "---"),
         (3, "Diff"),
-        (4, "---"),
+        (4, if side_by_side { "Unified" } else { "Side" }),
         (5, "Stage"),
         (6, "Unstage"),
         (7, "Commit"),
@@ -809,7 +848,7 @@ fn render_menu(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
 }
 
 fn render_settings(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
-    let area = centered_rect(64, 9, viewport);
+    let area = centered_rect(64, 10, viewport);
     frame.render_widget(Clear, area);
     let Some(draft) = state.settings_preview.as_ref() else {
         return;
@@ -820,6 +859,10 @@ fn render_settings(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
             if draft.show_hidden { "Off" } else { "On" }
         ),
         format!("Sort: {:?}", draft.sort_key),
+        format!(
+            "Preview: {}",
+            if draft.preview_enabled { "On" } else { "Off" }
+        ),
     ];
     let mut lines: Vec<_> = values
         .iter()
@@ -1571,6 +1614,30 @@ fn render_main(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics)
     function_keys.push((11, "---"));
     function_keys.sort_by_key(|(key, _)| *key);
     render_function_bar(frame, metrics.function_bar, &function_keys);
+    render_preview_placeholder(frame, state, metrics);
+}
+
+fn render_preview_placeholder(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
+    let Some(area) = metrics.preview else {
+        return;
+    };
+    frame.render_widget(
+        Paragraph::new(preview_text(state))
+            .block(Block::default().title(" Preview ").borders(Borders::LEFT))
+            .style(palette::role(ThemeRole::MainBackground)),
+        area,
+    );
+}
+
+fn preview_text(state: &AppState) -> String {
+    match state.preview.as_ref().map(|(_, _, content)| content) {
+        Some(crate::model::viewer::ViewerState::Loading { .. }) => "Loading preview...".into(),
+        Some(crate::model::viewer::ViewerState::Ready(document)) => document.text.clone(),
+        Some(crate::model::viewer::ViewerState::Binary) => "Binary file".into(),
+        Some(crate::model::viewer::ViewerState::TooLarge) => "File too large for preview".into(),
+        Some(crate::model::viewer::ViewerState::Error(error)) => format!("Preview error: {error}"),
+        None => "Select a text file to preview.".into(),
+    }
 }
 
 fn render_function_bar(frame: &mut Frame<'_>, area: Rect, commands: &[(u8, &str)]) {
@@ -2019,6 +2086,8 @@ mod tests {
             input_dialog: None,
             confirm_dialog: None,
             viewer: None,
+            preview: None,
+            preview_generation: 0,
             editor: None,
             sort_key: crate::model::directory::SortKey::Name,
             sort_direction: crate::model::directory::SortDirection::Ascending,
@@ -2046,6 +2115,8 @@ mod tests {
             plugin_decorations: std::collections::BTreeMap::new(),
             git_modified_paths: std::collections::HashSet::new(),
             git_status_view: None,
+            git_status_preview: None,
+            git_status_preview_side_by_side: false,
             git_diff: None,
             git_diff_side_by_side: false,
             git_diff_origin: crate::app::GitDiffOrigin::default(),
@@ -2361,6 +2432,8 @@ mod tests {
             input_dialog: None,
             confirm_dialog: None,
             viewer: None,
+            preview: None,
+            preview_generation: 0,
             editor: None,
             sort_key: crate::model::directory::SortKey::Name,
             sort_direction: crate::model::directory::SortDirection::Ascending,
@@ -2388,6 +2461,8 @@ mod tests {
             plugin_decorations: std::collections::BTreeMap::new(),
             git_modified_paths: std::collections::HashSet::new(),
             git_status_view: None,
+            git_status_preview: None,
+            git_status_preview_side_by_side: false,
             git_diff: None,
             git_diff_side_by_side: false,
             git_diff_origin: crate::app::GitDiffOrigin::default(),

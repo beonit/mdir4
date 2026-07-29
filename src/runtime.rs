@@ -198,6 +198,8 @@ fn run_loop(
         .width
         .map(crate::layout::ColumnWidthMode::Custom)
         .unwrap_or_default();
+    state.layout_settings.preview.enabled = loaded.config.preview.enabled;
+    state.layout_settings.preview.width_percent = loaded.config.preview.width_percent.clamp(35, 65);
     state.favorites = crate::plugins::favorites::FavoritesState::from_plugin_config(
         loaded
             .config
@@ -646,6 +648,19 @@ impl EffectWorker {
                                 });
                         Action::GitStatusLoaded { result }
                     }
+                    Effect::LoadGitStatusPreview { directory, path } => {
+                        let backend = GitCliReadBackend;
+                        let result = backend.discover(&directory).and_then(|repository| {
+                            let repository = repository
+                                .ok_or_else(|| "Git repository not found.".to_string())?;
+                            backend.diff(
+                                &repository,
+                                &path,
+                                crate::plugins::git::model::DiffTarget::Combined,
+                            )
+                        });
+                        Action::GitStatusPreviewLoaded { path, result }
+                    }
                     Effect::LoadGitDiff { directory, path } => {
                         let backend = GitCliReadBackend;
                         let display_path = path.as_path().to_path_buf();
@@ -827,6 +842,54 @@ impl EffectWorker {
                     Effect::LoadViewer(path) => {
                         let result = filesystem.read_file(&path, 32 * 1024 * 1024);
                         Action::ViewerLoaded { path, result }
+                    }
+                    Effect::LoadPreview { path, generation } => {
+                        let result = filesystem.read_file(&path, 1024 * 1024);
+                        Action::PreviewLoaded {
+                            path,
+                            generation,
+                            result,
+                        }
+                    }
+                    Effect::LoadPreviewDiff {
+                        directory,
+                        path,
+                        generation,
+                    } => {
+                        let backend = GitCliReadBackend;
+                        let result = backend.discover(&directory).and_then(|repository| {
+                            let repository = repository
+                                .ok_or_else(|| "Git repository not found.".to_string())?;
+                            let relative = path
+                                .strip_prefix(&repository.worktree_root)
+                                .map_err(|_| "Selected file is outside the Git worktree.")?;
+                            let relative =
+                                crate::plugins::git::model::RepoRelativePath::new(relative)?;
+                            backend.diff(
+                                &repository,
+                                &relative,
+                                crate::plugins::git::model::DiffTarget::Combined,
+                            )
+                        });
+                        Action::PreviewDiffLoaded {
+                            path,
+                            generation,
+                            result,
+                        }
+                    }
+                    Effect::LoadRemotePreview {
+                        alias,
+                        path,
+                        display_path,
+                        generation,
+                    } => {
+                        let result = crate::remote::sftp::OpenSshSftpSession::new(alias)
+                            .read_file(&path, 1024 * 1024);
+                        Action::RemotePreviewLoaded {
+                            path: display_path,
+                            generation,
+                            result,
+                        }
                     }
                     Effect::LoadEditor(path) => {
                         let modified = filesystem
@@ -1436,6 +1499,8 @@ mod tests {
             input_dialog: None,
             confirm_dialog: None,
             viewer: None,
+            preview: None,
+            preview_generation: 0,
             editor: None,
             sort_key: crate::model::directory::SortKey::Name,
             sort_direction: crate::model::directory::SortDirection::Ascending,
@@ -1463,6 +1528,8 @@ mod tests {
             plugin_decorations: std::collections::BTreeMap::new(),
             git_modified_paths: std::collections::HashSet::new(),
             git_status_view: None,
+            git_status_preview: None,
+            git_status_preview_side_by_side: false,
             git_diff: None,
             git_diff_side_by_side: false,
             git_diff_origin: crate::app::GitDiffOrigin::default(),
