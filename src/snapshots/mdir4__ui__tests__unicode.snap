@@ -3,9 +3,9 @@ source: src/ui.rs
 expression: "rendered(&basic, 80, 25)"
 ---
 /work/한 글 -folder                                                               
-  docs                              <DIR> ----- --:--                           
-  README.md                          2.0K ----- --:--                           
-  한 글 -문 서 .txt                       42B ----- --:--                           
+  docs                                                         <DIR> ----- --:--
+  README.md                                                     2.0K ----- --:--
+  한 글 -문 서 .txt                                                  42B ----- --:--
                                                                                 
                                                                                 
                                                                                 
@@ -26,4 +26,4 @@ expression: "rendered(&basic, 80, 25)"
                                                                                 
 docs  0B DIR                                         │ F 2  D 1  S 0/0B  -- Free
 F1 Help       F2 Ren        F3 View      F4 Edit      F5 Copy      F6 Move      
-F7 Dir        F8 Del        F9 Shell     F10 MCD      F11 ---      F12 Menu
+F7 Dir        F8 Del        F9 Shell     F10 MCD      F11 ---      F12 Settings

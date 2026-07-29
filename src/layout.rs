@@ -13,6 +13,8 @@ pub const MIN_HEIGHT: u16 = 15;
 pub const SINGLE_ROW_FUNCTION_WIDTH: u16 = 96;
 const MIN_COLUMN_WIDTH: u16 = 12;
 const MAX_COLUMNS: u16 = 6;
+/// Two Long-view columns need room for a name, size, and date in each column.
+const MIN_TWO_COLUMN_WIDTH: u16 = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ColumnCountMode {
@@ -142,15 +144,38 @@ pub fn calculate_for_entries(
     settings: LayoutSettings,
     entry_count: usize,
 ) -> LayoutMetrics {
+    calculate_for_view(viewport, settings, entry_count, false)
+}
+
+pub fn calculate_for_view(
+    viewport: Viewport,
+    settings: LayoutSettings,
+    entry_count: usize,
+    long_view: bool,
+) -> LayoutMetrics {
     let mut metrics = calculate(viewport, settings);
-    if metrics.too_small || !matches!(settings.column_count, ColumnCountMode::Auto) {
+    if metrics.too_small {
         return metrics;
     }
+    if long_view {
+        metrics.rows_per_column = metrics.rows_per_column.saturating_sub(1);
+        metrics.page_capacity = metrics.rows_per_column * metrics.columns.len();
+    }
+    if !matches!(settings.column_count, ColumnCountMode::Auto) {
+        balance_visible_rows(&mut metrics, entry_count);
+        return metrics;
+    }
+    let minimum_columns = if viewport.width >= MIN_TWO_COLUMN_WIDTH && metrics.columns.len() >= 2 {
+        2
+    } else {
+        1
+    };
     let required = entry_count
         .max(1)
         .div_ceil(metrics.rows_per_column)
-        .min(metrics.columns.len());
+        .clamp(minimum_columns.max(1), metrics.columns.len());
     if required == metrics.columns.len() {
+        balance_visible_rows(&mut metrics, entry_count);
         return metrics;
     }
     let count = required as u16;
@@ -166,7 +191,20 @@ pub fn calculate_for_entries(
         })
         .collect();
     metrics.page_capacity = metrics.rows_per_column * metrics.columns.len();
+    balance_visible_rows(&mut metrics, entry_count);
     metrics
+}
+
+fn balance_visible_rows(metrics: &mut LayoutMetrics, entry_count: usize) {
+    let columns = metrics.columns.len();
+    if columns == 0 || metrics.rows_per_column == 0 {
+        return;
+    }
+    let physical_capacity = metrics.rows_per_column * columns;
+    if entry_count <= physical_capacity {
+        metrics.rows_per_column = entry_count.max(1).div_ceil(columns);
+        metrics.page_capacity = metrics.rows_per_column * columns;
+    }
 }
 
 #[cfg(test)]
@@ -214,6 +252,47 @@ mod tests {
                 .len(),
             4
         );
+    }
+
+    #[test]
+    fn wide_auto_layout_keeps_two_columns_even_for_a_short_listing() {
+        let metrics = calculate_for_entries(
+            Viewport {
+                width: MIN_TWO_COLUMN_WIDTH,
+                height: 25,
+            },
+            LayoutSettings::default(),
+            1,
+        );
+        assert_eq!(metrics.columns.len(), 2);
+        assert_eq!(metrics.columns[0].width, MIN_TWO_COLUMN_WIDTH / 2);
+
+        let long = calculate_for_view(
+            Viewport {
+                width: MIN_TWO_COLUMN_WIDTH,
+                height: 25,
+            },
+            LayoutSettings::default(),
+            1,
+            true,
+        );
+        assert_eq!(long.columns.len(), 2);
+        assert_eq!(long.rows_per_column, 1);
+    }
+
+    #[test]
+    fn short_listing_is_balanced_across_wide_columns() {
+        let metrics = calculate_for_entries(
+            Viewport {
+                width: MIN_TWO_COLUMN_WIDTH,
+                height: 25,
+            },
+            LayoutSettings::default(),
+            15,
+        );
+        assert_eq!(metrics.columns.len(), 2);
+        assert_eq!(metrics.rows_per_column, 8);
+        assert_eq!(metrics.page_capacity, 16);
     }
 
     #[test]

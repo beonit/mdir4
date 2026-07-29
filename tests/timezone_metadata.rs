@@ -63,6 +63,7 @@ fn directory_load_preserves_attributes_and_converts_known_modified() {
         system: false,
         archive: true,
         executable: false,
+        unix_mode: None,
     };
     let listing = load_directory_with_timezone(
         &OneEntryFs { entry },

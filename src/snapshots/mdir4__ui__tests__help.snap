@@ -1,29 +1,30 @@
 ---
 source: src/ui.rs
+assertion_line: 2662
 expression: "rendered(&basic, 80, 25)"
 ---
 ┌ Mdir4 Help ──────────────────────────────────────────────────────────────────┐
-│F1-F12 Commands          │Ctrl+F1-F12 Git Commands │Git Status Mode           │
-│F1     Help              │Ctrl+F1 Git Status       │Ctrl+G / Ctrl+F1 Open     │
-│F2     Ren               │Ctrl+F2 Git Diff         │Arrows/Pg/Home/End Select │
-│F3     View              │Ctrl+F3 Git Add          │Space Mark   R Refresh    │
-│F4     Edit              │Ctrl+F4 Git Unstage      │Enter/F3 Diff             │
-│F5     Copy              │Ctrl+F5 Git Commit       │F5 Stage     F6 Unstage   │
-│F6     Move              │Ctrl+F6 Git Amend        │F7 Commit    F8 Amend     │
-│F7     Dir               │Ctrl+F7 Git Rebase       │F9 Stash     F10 Log      │
-│F8     Del               │Ctrl+F8 Git Fetch        │F11 Branch   F12 Discard  │
-│F9     Shell             │Ctrl+F9 Git Log          │                          │
-│F10    MCD               │Ctrl+F10 Git Stash       │Git Subviews              │
-│F12    Menu              │Ctrl+F11 Git Branches    │Diff: Ctrl+F Find, F3 Ne… │
-│                         │Ctrl+F12 Git Refresh     │Stash: F5 Apply, F7 Save  │
-│Navigation / Global      │                         │       F8 Drop            │
-│Arrows/Pg/Home/End Browse│Git File Markers         │Branch: Enter Switch      │
-│Enter Open / Select <UP>…│M Modified   A Added     │        F7 New, F8 Rebase │
-│Space/Ins/Ctrl+A Mark    │D Deleted    R Renamed   │Log: Enter/F3 Detail      │
-│Esc Clear Selection      │? Untracked  ! Conflict  │                          │
-│Ctrl+R Refresh  Ctrl+Shi…│                         │Ctrl+F6 Amend HEAD        │
-│Ctrl+H Hidden  Tab View  │                         │  staged changes, keep m… │
-│Alt+O Settings  Ctrl+Q Q…│                         │Ctrl+F7 Choose rebase ta… │
-│Esc or F1 Close Help     │                         │Ctrl+F8 Fetch all / prune │
-│                         │                         │                          │
+│Modes                                 │Git File Markers                       │
+│Ctrl+B Amazon Build                   │M Modified   A Added                   │
+│Ctrl+G Git Status                     │D Deleted    R Renamed                 │
+│Ctrl+F Favorites                      │? Untracked  ! Conflict                │
+│Esc Exit mode                         │                                       │
+│                                      │Mode Help                              │
+│Navigation / Global                   │Each mode shows its commands in the f… │
+│Arrows/Pg/Home/End Browse             │                                       │
+│Enter Open / Select <UP> Parent       │                                       │
+│Space/Ins/Ctrl+A Mark                 │                                       │
+│Esc Clear Selection                   │                                       │
+│Ctrl+R Refresh  Ctrl+Shift+S Sort     │                                       │
+│Ctrl+H Hidden  Tab View               │                                       │
+│F12/Alt+O Settings  Ctrl+Q Quit       │                                       │
+│Esc or F1 Close Help                  │                                       │
+│                                      │                                       │
+│                                      │                                       │
+│                                      │                                       │
+│                                      │                                       │
+│                                      │                                       │
+│                                      │                                       │
+│                                      │                                       │
+│                                      │                                       │
 └──────────────────────────────────────────────────────────────────────────────┘

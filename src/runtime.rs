@@ -12,7 +12,10 @@ use std::{
 
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
-    event::{self, Event, KeyCode as CrosstermKeyCode, KeyEvent, KeyEventKind},
+    event::{
+        self, Event, KeyCode as CrosstermKeyCode, KeyEvent, KeyEventKind, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{
         Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
@@ -73,7 +76,7 @@ pub fn run() -> Result<(), AppError> {
     let options = parse_args(env::args_os().skip(1))?;
     let config_path = config_path();
     let loaded = crate::config::load_or_default(&config_path);
-    let start_path = start_path(&loaded.config, options.start_path)?;
+    let start_path = start_path(options.start_path)?;
     install_panic_hook();
     let mut session = TerminalSession::new()?;
     let final_path = run_loop(&mut session, start_path, config_path, loaded)?;
@@ -127,15 +130,9 @@ fn parse_args(arguments: impl IntoIterator<Item = OsString>) -> Result<CliOption
     Ok(options)
 }
 
-fn start_path(
-    config: &crate::config::Config,
-    explicit: Option<PathBuf>,
-) -> Result<PathBuf, AppError> {
+fn start_path(explicit: Option<PathBuf>) -> Result<PathBuf, AppError> {
     let current = env::current_dir()?;
-    let home = env::var_os("HOME").map(PathBuf::from);
-    let path = explicit.unwrap_or_else(|| {
-        crate::config::resolve_start_path(config.last_path.as_deref(), home.as_deref(), &current)
-    });
+    let path = explicit.unwrap_or(current);
     if path.is_dir() {
         Ok(path.canonicalize()?)
     } else {
@@ -277,10 +274,11 @@ fn run_loop(
             actions.push_back(action);
         }
         if dirty {
-            let metrics = crate::layout::calculate_for_entries(
+            let metrics = crate::layout::calculate_for_view(
                 state.viewport,
                 state.layout_settings,
                 state.entries.len(),
+                state.long_view,
             );
             session
                 .terminal
@@ -392,7 +390,19 @@ fn run_shell_process(shell: &OsStr, directory: &Path, command: &str) -> Result<(
 fn shell_process(shell: &OsStr, directory: &Path, command: &str) -> Command {
     let mut process = Command::new(shell);
     if !command.is_empty() {
-        process.args(["-c", command]);
+        // Interactive shell startup files are where users commonly define aliases
+        // and functions (for example, ~/.zshrc and ~/.bashrc).
+        // zsh enables job control for interactive shells by default.  When mdir4
+        // is itself running as a shell job, that can leave mdir4 in a background
+        // process group after zsh exits and suspend it on the next terminal write.
+        if Path::new(shell)
+            .file_name()
+            .is_some_and(|name| name == "zsh")
+        {
+            process.args(["-i", "+m", "-c", command]);
+        } else {
+            process.args(["-i", "-c", command]);
+        }
     }
     process.current_dir(directory);
     process
@@ -1068,25 +1078,65 @@ impl Drop for EffectWorker {
 struct TerminalSession {
     terminal: AppTerminal,
     _lifecycle: TerminalLifecycle<CrosstermOps>,
+    keyboard_enhancements_active: bool,
 }
 
 impl TerminalSession {
     fn new() -> io::Result<Self> {
         let lifecycle = TerminalLifecycle::start(CrosstermOps)?;
         let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
-        Ok(Self {
+        let mut session = Self {
             terminal,
             _lifecycle: lifecycle,
-        })
+            keyboard_enhancements_active: false,
+        };
+        session.enable_keyboard_enhancements();
+        Ok(session)
     }
 
     fn suspend(&mut self) {
+        self.disable_keyboard_enhancements();
         self._lifecycle.restore();
     }
 
     fn resume(&mut self) -> io::Result<()> {
         self._lifecycle.resume()?;
+        self.enable_keyboard_enhancements();
         self.terminal.clear()
+    }
+
+    fn enable_keyboard_enhancements(&mut self) {
+        if self.keyboard_enhancements_active
+            || !matches!(
+                crossterm::terminal::supports_keyboard_enhancement(),
+                Ok(true)
+            )
+        {
+            return;
+        }
+        let mut output = stdout();
+        if execute!(
+            output,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )
+        .is_ok()
+        {
+            self.keyboard_enhancements_active = true;
+        }
+    }
+
+    fn disable_keyboard_enhancements(&mut self) {
+        if self.keyboard_enhancements_active {
+            let mut output = stdout();
+            let _ = execute!(output, PopKeyboardEnhancementFlags);
+            self.keyboard_enhancements_active = false;
+        }
+    }
+}
+
+impl Drop for TerminalSession {
+    fn drop(&mut self) {
+        self.disable_keyboard_enhancements();
     }
 }
 
@@ -1265,7 +1315,12 @@ mod tests {
         assert_eq!(process.get_program(), OsStr::new("/bin/zsh"));
         assert_eq!(
             process.get_args().collect::<Vec<_>>(),
-            vec![OsStr::new("-c"), OsStr::new("mvn build")]
+            vec![
+                OsStr::new("-i"),
+                OsStr::new("+m"),
+                OsStr::new("-c"),
+                OsStr::new("mvn build")
+            ]
         );
         assert_eq!(process.get_current_dir(), Some(Path::new("/work/project")));
 
@@ -1366,6 +1421,7 @@ mod tests {
             current_path: PathBuf::from("/"),
             entries: Vec::new(),
             selected: 0,
+            directory_selection_history: std::collections::HashMap::new(),
             marked: HashSet::new(),
             type_search: None,
             viewport: Viewport {

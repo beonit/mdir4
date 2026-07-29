@@ -191,6 +191,7 @@ fn resize_keeps_the_selected_entry_identity() {
         current_path: PathBuf::from("/work"),
         entries,
         selected: 137,
+        directory_selection_history: std::collections::HashMap::new(),
         marked: HashSet::new(),
         type_search: None,
         viewport: Viewport {

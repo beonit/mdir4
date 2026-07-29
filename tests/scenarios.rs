@@ -61,6 +61,7 @@ fn ten_thousand_entry_navigation_and_render_smoke() {
         current_path: PathBuf::from("/large"),
         entries,
         selected: 0,
+        directory_selection_history: std::collections::HashMap::new(),
         marked: Default::default(),
         type_search: None,
         viewport: Viewport {

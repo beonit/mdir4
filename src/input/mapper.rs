@@ -11,6 +11,12 @@ pub fn map_key(screen: Screen, event: KeyEvent, registry: &CommandRegistry) -> O
 }
 
 pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) -> Option<Action> {
+    if screen == Screen::Main && chord == KeyChord::plain(KeyCode::Character('.')) {
+        return Some(Action::GoParent);
+    }
+    if screen == Screen::Main && chord == KeyChord::plain(KeyCode::Character('!')) {
+        return Some(Action::ShowShellCommand);
+    }
     if screen == Screen::Main && chord == KeyChord::control(KeyCode::Character('b')) {
         return Some(Action::ShowAmazonBuild);
     }
@@ -37,22 +43,8 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
         };
     }
     if screen == Screen::GitStatus {
-        if chord.control
-            && let KeyCode::Function(number) = chord.code
-        {
-            return match number {
-                1 | 12 => Some(Action::RefreshGitStatus),
-                2 => Some(Action::ShowGitDiff),
-                3 => Some(Action::GitStage),
-                4 => Some(Action::GitUnstage),
-                5 => Some(Action::ShowGitCommit),
-                6 => Some(Action::ShowGitAmend),
-                7 | 11 => Some(Action::ShowGitBranches),
-                8 => Some(Action::GitFetch),
-                9 => Some(Action::ShowGitLog),
-                10 => Some(Action::ShowGitStashSave),
-                _ => None,
-            };
+        if chord.control && matches!(chord.code, KeyCode::Function(_)) {
+            return None;
         }
         return match chord {
             KeyChord {

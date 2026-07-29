@@ -239,8 +239,12 @@ fn parse_key(key: &str) -> Result<KeyEvent, String> {
 fn render(state: &AppState) -> String {
     let backend = TestBackend::new(state.viewport.width, state.viewport.height);
     let mut terminal = Terminal::new(backend).expect("test terminal");
-    let metrics =
-        layout::calculate_for_entries(state.viewport, state.layout_settings, state.entries.len());
+    let metrics = layout::calculate_for_view(
+        state.viewport,
+        state.layout_settings,
+        state.entries.len(),
+        state.long_view,
+    );
     terminal
         .draw(|frame| ui::render(frame, state, &metrics))
         .expect("render");

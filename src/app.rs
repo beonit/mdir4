@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -439,6 +439,8 @@ pub struct AppState {
     pub current_path: PathBuf,
     pub entries: Vec<FileEntry>,
     pub selected: usize,
+    /// Last selected entry for each visited local directory.
+    pub directory_selection_history: HashMap<PathBuf, PathBuf>,
     pub marked: HashSet<EntryId>,
     pub type_search: Option<(String, std::time::Instant)>,
     pub viewport: Viewport,
@@ -504,6 +506,7 @@ impl AppState {
             current_path: start_path,
             entries: Vec::new(),
             selected: 0,
+            directory_selection_history: HashMap::new(),
             marked: HashSet::new(),
             type_search: None,
             viewport,
@@ -616,26 +619,36 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                     .take()
                     .filter(|message| is_attention_message(message));
                 let same_directory = state.current_path == path;
-                let selected_path = same_directory
-                    .then(|| state.selected_entry().map(|entry| entry.path.clone()))
-                    .flatten();
+                if let Some(selected_path) = state.selected_entry().map(|entry| entry.path.clone())
+                {
+                    state
+                        .directory_selection_history
+                        .insert(state.current_path.clone(), selected_path);
+                }
                 state.current_path = path;
                 state.entries = listing.entries;
                 if !state.show_hidden {
                     state.entries.retain(|entry| {
-                        entry.kind == EntryKind::Parent || !entry.attributes.hidden
+                        entry.kind == EntryKind::Parent
+                            || !entry.name.to_string_lossy().starts_with('.')
                     });
                 }
                 sort_entries(&mut state.entries, state.sort_key, state.sort_direction);
+                let remembered_selection = state
+                    .directory_selection_history
+                    .get(&state.current_path)
+                    .cloned();
                 if same_directory {
                     selection::retain_existing(&mut state.marked, &state.entries);
-                    state.selected = selected_path
+                    state.selected = remembered_selection
                         .and_then(|path| state.entries.iter().position(|entry| entry.path == path))
                         .unwrap_or_else(|| {
                             state.selected.min(state.entries.len().saturating_sub(1))
                         });
                 } else {
-                    state.selected = 0;
+                    state.selected = remembered_selection
+                        .and_then(|path| state.entries.iter().position(|entry| entry.path == path))
+                        .unwrap_or(0);
                     state.marked.clear();
                 }
                 state.message = attention;
@@ -736,19 +749,21 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.type_search = Some((query, now));
         }
         Action::Move(direction) => {
-            let metrics = layout::calculate_for_entries(
+            let metrics = layout::calculate_for_view(
                 state.viewport,
                 state.layout_settings,
                 state.entries.len(),
+                state.long_view,
             );
             state.selected =
                 layout::move_cursor(state.selected, state.entries.len(), direction, &metrics);
         }
         Action::Page(direction) => {
-            let metrics = layout::calculate_for_entries(
+            let metrics = layout::calculate_for_view(
                 state.viewport,
                 state.layout_settings,
                 state.entries.len(),
+                state.long_view,
             );
             state.selected =
                 layout::move_page(state.selected, state.entries.len(), direction, &metrics);
@@ -758,10 +773,11 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::ToggleMark => toggle_current_mark(state),
         Action::ToggleMarkAndAdvance => {
             toggle_current_mark(state);
-            let metrics = layout::calculate_for_entries(
+            let metrics = layout::calculate_for_view(
                 state.viewport,
                 state.layout_settings,
                 state.entries.len(),
+                state.long_view,
             );
             state.selected = layout::move_cursor(
                 state.selected,
@@ -789,6 +805,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
         Action::GoParent => {
             if let Some(parent) = parent_of(&state.current_path) {
+                // Returning to a parent should land on the child we just left.
+                state
+                    .directory_selection_history
+                    .insert(parent.clone(), state.current_path.clone());
                 state.message = Some("Loading parent directory...".to_string());
                 return vec![Effect::LoadDirectory(parent)];
             }
@@ -2255,45 +2275,27 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.settings_cursor = if delta < 0 {
                 state.settings_cursor.saturating_sub(1)
             } else {
-                (state.settings_cursor + 1).min(7)
+                (state.settings_cursor + 1).min(1)
             };
         }
         Action::SettingsChange(delta) => {
             if let Some(draft) = &mut state.settings_preview {
                 match state.settings_cursor {
-                    0 => draft.long_view = !draft.long_view,
+                    0 => draft.show_hidden = !draft.show_hidden,
                     1 => {
-                        let names = ["Classic", "DOS Blue", "Dark", "Mono", "Light"];
-                        let index = names
-                            .iter()
-                            .position(|name| name.eq_ignore_ascii_case(&draft.theme))
-                            .unwrap_or(0);
-                        draft.theme = names[(index + 1) % names.len()].to_string();
-                    }
-                    2 => {
-                        draft.column_count = Some(if delta < 0 {
-                            draft.column_count.unwrap_or(1).saturating_sub(1).max(1)
+                        draft.sort_key = if delta < 0 {
+                            match draft.sort_key {
+                                SortKey::Name => SortKey::Time,
+                                SortKey::Extension => SortKey::Name,
+                                SortKey::Size => SortKey::Extension,
+                                SortKey::Date => SortKey::Size,
+                                SortKey::Time => SortKey::Date,
+                            }
                         } else {
-                            (draft.column_count.unwrap_or(1) + 1).min(6)
-                        })
-                    }
-                    3 => {
-                        draft.column_width = Some(if delta < 0 {
-                            draft.column_width.unwrap_or(40).saturating_sub(2).max(20)
-                        } else {
-                            (draft.column_width.unwrap_or(40) + 2).min(80)
-                        })
-                    }
-                    4 => draft.sort_key = draft.sort_key.next(),
-                    5 => {
-                        draft.sort_direction = if draft.sort_direction == SortDirection::Ascending {
-                            SortDirection::Descending
-                        } else {
-                            SortDirection::Ascending
+                            draft.sort_key.next()
                         }
                     }
-                    6 => draft.show_hidden = !draft.show_hidden,
-                    _ => draft.use_custom_keymap = !draft.use_custom_keymap,
+                    _ => unreachable!("settings cursor is limited to visible options"),
                 }
             }
         }
@@ -2303,6 +2305,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 state.show_hidden = draft.show_hidden;
                 state.sort_key = draft.sort_key;
                 state.sort_direction = draft.sort_direction;
+                sort_entries(&mut state.entries, state.sort_key, state.sort_direction);
                 state.persisted_config.columns.count = draft.column_count;
                 state.persisted_config.columns.width = draft.column_width;
                 state.layout_settings.column_count = draft
@@ -2321,12 +2324,14 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                     state.theme = palette;
                 }
                 state.screen = Screen::Main;
+                let mut effects = vec![Effect::LoadDirectory(state.current_path.clone())];
                 if let Some(path) = state.config_path.clone() {
-                    return vec![Effect::SaveConfig {
+                    effects.push(Effect::SaveConfig {
                         path,
                         config: config_from_state(state),
-                    }];
+                    });
                 }
+                return effects;
             }
         }
         Action::SortKeyNext => {
@@ -2702,6 +2707,7 @@ mod tests {
             current_path: PathBuf::from("/test"),
             entries: vec![entry("a", EntryKind::File), entry("b", EntryKind::File)],
             selected: 0,
+            directory_selection_history: HashMap::new(),
             marked: HashSet::new(),
             type_search: None,
             viewport: Viewport {
@@ -2863,7 +2869,7 @@ mod tests {
             reduce(&mut app, Action::AmazonBuildRun),
             vec![Effect::RunAmazonBuildCommand {
                 directory: PathBuf::from("/test"),
-                command: "brazil build".into(),
+                command: "brazil-build".into(),
             }]
         );
         assert!(matches!(
@@ -3000,6 +3006,89 @@ mod tests {
         assert_eq!(
             effects,
             vec![Effect::LoadDirectory(PathBuf::from("/test/a"))]
+        );
+    }
+
+    #[test]
+    fn directory_navigation_restores_last_selection_and_parent_child() {
+        let mut app = state();
+        let child = PathBuf::from("/test/child");
+        let child_file = child.join("remembered.txt");
+        app.entries = vec![
+            FileEntry::new(child.clone(), "child".into(), EntryKind::Directory, 0),
+            entry("other", EntryKind::Directory),
+        ];
+        app.selected = 0;
+
+        reduce(&mut app, Action::Open);
+        reduce(
+            &mut app,
+            Action::DirectoryLoaded {
+                path: child.clone(),
+                result: Ok(DirectoryListing {
+                    path: child.clone(),
+                    entries: vec![
+                        FileEntry::new(
+                            child.join("first.txt"),
+                            "first.txt".into(),
+                            EntryKind::File,
+                            0,
+                        ),
+                        FileEntry::new(
+                            child_file.clone(),
+                            "remembered.txt".into(),
+                            EntryKind::File,
+                            0,
+                        ),
+                    ],
+                }),
+            },
+        );
+        app.selected = 1;
+
+        reduce(&mut app, Action::GoParent);
+        reduce(
+            &mut app,
+            Action::DirectoryLoaded {
+                path: PathBuf::from("/test"),
+                result: Ok(DirectoryListing {
+                    path: PathBuf::from("/test"),
+                    entries: vec![
+                        FileEntry::new(child.clone(), "child".into(), EntryKind::Directory, 0),
+                        entry("other", EntryKind::Directory),
+                    ],
+                }),
+            },
+        );
+        assert_eq!(app.selected_entry().map(|entry| &entry.path), Some(&child));
+
+        reduce(&mut app, Action::Open);
+        reduce(
+            &mut app,
+            Action::DirectoryLoaded {
+                path: child.clone(),
+                result: Ok(DirectoryListing {
+                    path: child.clone(),
+                    entries: vec![
+                        FileEntry::new(
+                            child.join("first.txt"),
+                            "first.txt".into(),
+                            EntryKind::File,
+                            0,
+                        ),
+                        FileEntry::new(
+                            child_file.clone(),
+                            "remembered.txt".into(),
+                            EntryKind::File,
+                            0,
+                        ),
+                    ],
+                }),
+            },
+        );
+        assert_eq!(
+            app.selected_entry().map(|entry| &entry.path),
+            Some(&child_file)
         );
     }
 
@@ -3419,6 +3508,59 @@ mod tests {
         reduce(&mut app, Action::CloseOverlay);
         assert_eq!(app.screen, Screen::Main);
         assert!(app.settings_preview.is_none());
+    }
+
+    #[test]
+    fn settings_only_cycle_hidden_files_and_sort_key() {
+        let mut app = state();
+        app.show_hidden = true;
+        app.sort_key = SortKey::Name;
+
+        reduce(&mut app, Action::ShowSettings);
+        reduce(&mut app, Action::SettingsChange(1));
+        assert!(!app.settings_preview.as_ref().unwrap().show_hidden);
+
+        reduce(&mut app, Action::SettingsMove(1));
+        reduce(&mut app, Action::SettingsChange(1));
+        assert_eq!(
+            app.settings_preview.as_ref().unwrap().sort_key,
+            SortKey::Extension
+        );
+
+        reduce(&mut app, Action::ApplySettings);
+        assert!(!app.show_hidden);
+        assert_eq!(app.sort_key, SortKey::Extension);
+    }
+
+    #[test]
+    fn hiding_hidden_files_filters_dotfiles_not_platform_file_attributes() {
+        let mut app = state();
+        app.show_hidden = false;
+        let mut platform_hidden = entry("visible.txt", EntryKind::File);
+        platform_hidden.attributes.hidden = true;
+        reduce(
+            &mut app,
+            Action::DirectoryLoaded {
+                path: PathBuf::from("/test"),
+                result: Ok(DirectoryListing {
+                    path: PathBuf::from("/test"),
+                    entries: vec![
+                        FileEntry::parent(PathBuf::from("/")),
+                        entry(".git", EntryKind::Directory),
+                        entry(".github", EntryKind::Directory),
+                        platform_hidden,
+                    ],
+                }),
+            },
+        );
+
+        assert_eq!(
+            app.entries
+                .iter()
+                .map(FileEntry::display_name)
+                .collect::<Vec<_>>(),
+            ["..", "visible.txt"]
+        );
     }
 
     #[test]

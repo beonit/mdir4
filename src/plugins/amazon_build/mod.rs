@@ -10,11 +10,11 @@ pub const AMAZON_BUILD_PLUGIN_ID: &str = "amazon-build";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AmazonBuildCommand {
-    BrazilBuild,
-    BrazilBuildRelease,
-    BbTest,
-    BbcClean,
-    BwsClean,
+    BbBuild,
+    BbbBuildAll,
+    BbcCheckstyle,
+    BbrReleaseAll,
+    BccCleanCache,
     GitPull,
     GitFetch,
     GitPush,
@@ -29,11 +29,11 @@ pub enum AmazonBuildCommand {
 
 impl AmazonBuildCommand {
     pub const ALL: [Self; 15] = [
-        Self::BrazilBuild,
-        Self::BrazilBuildRelease,
-        Self::BbTest,
-        Self::BbcClean,
-        Self::BwsClean,
+        Self::BbBuild,
+        Self::BbbBuildAll,
+        Self::BbcCheckstyle,
+        Self::BbrReleaseAll,
+        Self::BccCleanCache,
         Self::GitPull,
         Self::GitFetch,
         Self::GitPush,
@@ -48,11 +48,11 @@ impl AmazonBuildCommand {
 
     pub fn section(self) -> &'static str {
         match self {
-            Self::BrazilBuild
-            | Self::BrazilBuildRelease
-            | Self::BbTest
-            | Self::BbcClean
-            | Self::BwsClean => "BUILD",
+            Self::BbBuild
+            | Self::BbbBuildAll
+            | Self::BbcCheckstyle
+            | Self::BbrReleaseAll
+            | Self::BccCleanCache => "BUILD",
             Self::GitPull | Self::GitFetch | Self::GitPush => "GIT",
             Self::Cupdate | Self::AddPackage | Self::RemovePackage | Self::VsChange => "WORKSPACE",
             Self::CrUpdate | Self::CrNew | Self::CrTargetMainline => "CODE REVIEW",
@@ -61,11 +61,11 @@ impl AmazonBuildCommand {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::BrazilBuild => "Brazil Build",
-            Self::BrazilBuildRelease => "Brazil Build Release",
-            Self::BbTest => "BB Test",
-            Self::BbcClean => "BBC Clean",
-            Self::BwsClean => "BWS Clean",
+            Self::BbBuild => "BB Build",
+            Self::BbbBuildAll => "BBB Build All Packages",
+            Self::BbcCheckstyle => "BBC Checkstyle",
+            Self::BbrReleaseAll => "BBR Release All Packages",
+            Self::BccCleanCache => "BCC Clean Package Cache",
             Self::GitPull => "Git Pull",
             Self::GitFetch => "Git Fetch",
             Self::GitPush => "Git Push",
@@ -81,11 +81,11 @@ impl AmazonBuildCommand {
 
     pub fn command(self, package: Option<&str>) -> Result<String, String> {
         let command = match self {
-            Self::BrazilBuild => "brazil build",
-            Self::BrazilBuildRelease => "brazil build release",
-            Self::BbTest => "bb test",
-            Self::BbcClean => "bbc clean",
-            Self::BwsClean => "bws clean",
+            Self::BbBuild => "brazil-build",
+            Self::BbbBuildAll => "brazil-recursive-cmd --allPackages brazil-build build",
+            Self::BbcCheckstyle => "brazil-build checkstyle -d -v",
+            Self::BbrReleaseAll => "brazil-recursive-cmd --allPackages brazil-build release",
+            Self::BccCleanCache => "brazil-package-cache clean",
             Self::GitPull => "git pull",
             Self::GitFetch => "git fetch",
             Self::GitPush => "git push",
@@ -201,8 +201,8 @@ mod tests {
     #[test]
     fn catalog_uses_the_requested_commands_and_rejects_unsafe_package_names() {
         assert_eq!(
-            AmazonBuildCommand::BrazilBuildRelease.command(None),
-            Ok("brazil build release".into())
+            AmazonBuildCommand::BbbBuildAll.command(None),
+            Ok("brazil-recursive-cmd --allPackages brazil-build build".into())
         );
         assert_eq!(
             AmazonBuildCommand::CrTargetMainline.command(None),

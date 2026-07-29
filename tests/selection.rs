@@ -26,6 +26,7 @@ fn state() -> AppState {
             entry("B.TXT", EntryKind::File, 20),
         ],
         selected: 0,
+        directory_selection_history: std::collections::HashMap::new(),
         marked: HashSet::new(),
         type_search: None,
         viewport: Viewport {

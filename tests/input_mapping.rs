@@ -143,6 +143,27 @@ fn control_g_opens_git_status_and_escape_closes_the_plugin_view() {
 }
 
 #[test]
+fn f12_opens_settings_and_space_changes_the_selected_option() {
+    let registry = CommandRegistry::default();
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Main,
+            KeyChord::plain(KeyCode::Function(12)),
+            &registry
+        ),
+        Some(Action::ShowSettings)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Settings,
+            KeyChord::plain(KeyCode::Character(' ')),
+            &registry
+        ),
+        Some(Action::SettingsChange(1))
+    ));
+}
+
+#[test]
 fn main_characters_are_file_name_typeahead_not_refresh_sort_or_hidden_shortcuts() {
     let registry = CommandRegistry::default();
     for character in ['r', 's', 'h'] {
@@ -316,17 +337,16 @@ fn viewer_function_keys_open_git_diff_modes() {
 }
 
 #[test]
-fn git_status_ctrl_function_keys_expose_amend_rebase_and_fetch() {
+fn git_status_ctrl_function_keys_are_unbound() {
     let registry = CommandRegistry::default();
-    for (number, expected) in [(6, "ShowGitAmend"), (7, "ShowGitBranches"), (8, "GitFetch")] {
-        let action = mapper::map_chord(
-            Screen::GitStatus,
-            KeyChord::control(KeyCode::Function(number)),
-            &registry,
-        );
-        assert_eq!(
-            action.map(|action| format!("{action:?}")),
-            Some(expected.into())
+    for number in 1..=12 {
+        assert!(
+            mapper::map_chord(
+                Screen::GitStatus,
+                KeyChord::control(KeyCode::Function(number)),
+                &registry,
+            )
+            .is_none()
         );
     }
 
@@ -465,6 +485,32 @@ fn f11_is_unbound_and_f9_runs_a_shell_command() {
 }
 
 #[test]
+fn exclamation_mark_opens_the_shell_command_dialog() {
+    let registry = CommandRegistry::default();
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Main,
+            KeyChord::plain(KeyCode::Character('!')),
+            &registry,
+        ),
+        Some(Action::ShowShellCommand)
+    ));
+}
+
+#[test]
+fn period_goes_to_the_parent_directory() {
+    let registry = CommandRegistry::default();
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Main,
+            KeyChord::plain(KeyCode::Character('.')),
+            &registry,
+        ),
+        Some(Action::GoParent)
+    ));
+}
+
+#[test]
 fn displayed_commands_and_actual_mappings_share_the_registry() {
     let registry = CommandRegistry::default();
     for command in registry.commands() {
@@ -523,28 +569,11 @@ fn control_q_and_uppercase_control_a_are_normalized() {
 }
 
 #[test]
-fn control_function_keys_preserve_the_modifier_and_map_all_twelve_callbacks() {
+fn control_function_keys_are_unbound() {
     let registry = CommandRegistry::default();
-    let expected = [
-        "ShowGitStatus",
-        "ShowSelectedGitDiff",
-        "GitStageBrowserSelection",
-        "GitUnstageBrowserSelection",
-        "ShowGitCommit",
-        "ShowGitAmend",
-        "ShowGitBranches",
-        "GitFetch",
-        "ShowGitLog",
-        "ShowGitStashSave",
-        "ShowGitBranches",
-        "ShowGitStatus",
-    ];
-    for (number, expected) in (1..=12).zip(expected) {
+    for number in 1..=12 {
         let event = KeyEvent::new(CrosstermKeyCode::F(number), KeyModifiers::CONTROL);
-        assert_eq!(
-            mapper::map_key(Screen::Main, event, &registry).map(|action| format!("{action:?}")),
-            Some(expected.to_string())
-        );
+        assert!(mapper::map_key(Screen::Main, event, &registry).is_none());
     }
 
     assert!(matches!(

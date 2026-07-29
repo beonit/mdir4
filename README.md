@@ -49,6 +49,9 @@ Start in the current directory:
 cargo run --locked
 ```
 
+When no directory argument is supplied, Mdir4 always starts in the shell's current working
+directory; it does not restore the previously visited directory on startup.
+
 Or open a directory directly:
 
 ```sh
@@ -78,6 +81,16 @@ directly:
 mdir4 --cwd-file /tmp/mdir4-last-directory /starting/directory
 ```
 
+The reusable function is kept in [`shell/mdir4.sh`](shell/mdir4.sh). It starts the real
+executable with a temporary CWD handoff file, then changes the current shell directory only after
+Mdir4 exits successfully with a valid directory. For a permanent setup, add this to your shell
+startup file:
+
+```sh
+# ~/.zshrc or ~/.bashrc
+source /absolute/path/to/Mdir4/shell/mdir4.sh
+```
+
 ## Key bindings
 
 | Key | Action |
@@ -86,20 +99,16 @@ mdir4 --cwd-file /tmp/mdir4-last-directory /starting/directory
 | `Enter` | Open an item (select `<UP>` to return to the parent directory) |
 | `Home` `End` / `PgUp` `PgDn` | Jump to the first/last item or previous/next page |
 | `Space` / `Insert` / `Ctrl+A` | Mark an item / mark and advance / mark all |
-| `R` / `S` / `Ctrl+S` / `H` | Refresh / change sort key / reverse sort / toggle hidden files |
+| Type filename | Move the cursor to a matching filename prefix |
+| `Ctrl+R` / `Ctrl+Shift+S` / `Ctrl+S` / `Ctrl+H` | Refresh / change sort key / reverse sort / toggle hidden files |
 | `Tab` | Toggle Short and Long view |
 | `F1`–`F9` | Help, Rename, View, Edit, Copy, Move, Make directory, Delete, Shell command |
-| `F10` / `F12` | MCD directory tree / Menu |
+| `F10` / `F12` | MCD directory tree / Settings |
 | `Ctrl+F` | Open the Favorites list |
 | `Ctrl+1`–`Ctrl+0` | Go to favorite slots 1–10 |
 | `Ctrl+Shift+1`–`Ctrl+Shift+0` | Register or replace favorite slots 1–10 |
 | `Ctrl+G` | Open Git status for the current local repository |
 | `Ctrl+Q` | Quit with confirmation |
-
-Git operations are also available from the browser and Git Status screen: `Ctrl+F6` amends HEAD
-with the staged changes while keeping the existing commit message, `Ctrl+F7` opens the branch
-target picker for rebase (`F8` confirms the selected target), and `Ctrl+F8` runs
-`git fetch --all --prune`.
 
 Inside Git Status mode, `F8` amends HEAD after confirmation and `F9` opens the stash list.
 

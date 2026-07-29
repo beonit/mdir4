@@ -17,6 +17,8 @@ pub struct EntryAttributes {
     pub system: bool,
     pub archive: bool,
     pub executable: bool,
+    /// POSIX permission bits when supplied by a Unix filesystem.
+    pub unix_mode: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

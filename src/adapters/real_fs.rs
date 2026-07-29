@@ -274,6 +274,7 @@ fn attributes_from_std(metadata: &fs::Metadata) -> EntryAttributes {
             system: value & 0x4 != 0,
             archive: value & 0x20 != 0,
             executable: false,
+            unix_mode: None,
         };
     }
     #[cfg(unix)]
@@ -282,6 +283,7 @@ fn attributes_from_std(metadata: &fs::Metadata) -> EntryAttributes {
         EntryAttributes {
             read_only: metadata.permissions().readonly(),
             executable: metadata.permissions().mode() & 0o111 != 0,
+            unix_mode: Some(metadata.permissions().mode()),
             ..EntryAttributes::default()
         }
     }

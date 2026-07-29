@@ -1,5 +1,6 @@
+#[cfg(test)]
+use crate::app::command_registry::CommandRegistry;
 use crate::{
-    app::command_registry::{CommandId, CommandRegistry},
     app::{AppState, Screen},
     fs::{EntryKind, FileEntry},
     layout::{
@@ -101,12 +102,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
 
     render_main(frame, state, metrics);
     match state.screen {
-        Screen::Help => render_help(
-            frame,
-            metrics.viewport,
-            &state.registry,
-            &state.plugin_commands,
-        ),
+        Screen::Help => render_help(frame, metrics.viewport),
         Screen::QuitConfirm => render_quit_confirmation(frame, metrics.viewport),
         Screen::InputDialog => render_input_dialog(frame, state, metrics.viewport),
         Screen::ConfirmDialog => render_confirm_dialog(frame, state, metrics.viewport),
@@ -342,7 +338,7 @@ fn render_git_status(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMe
     render_git_footer(
         frame,
         metrics,
-        &format!("{selected}  │  Ctrl+F6 Amend  Ctrl+F7 Rebase  Ctrl+F8 Fetch  Esc Files"),
+        &format!("{selected}  │  Esc Files"),
         &git_status_keys(),
     );
 }
@@ -813,40 +809,17 @@ fn render_menu(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
 }
 
 fn render_settings(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
-    let area = centered_rect(64, 16, viewport);
+    let area = centered_rect(64, 9, viewport);
     frame.render_widget(Clear, area);
     let Some(draft) = state.settings_preview.as_ref() else {
         return;
     };
     let values = [
-        format!("View: {}", if draft.long_view { "Long" } else { "Short" }),
-        format!("Theme: {}", draft.theme),
         format!(
-            "Column count: {}",
-            draft
-                .column_count
-                .map_or("Auto".to_string(), |value| value.to_string())
+            "Hide dotfiles (.git, .github): {}",
+            if draft.show_hidden { "Off" } else { "On" }
         ),
-        format!(
-            "Column width: {}",
-            draft
-                .column_width
-                .map_or("Auto".to_string(), |value| value.to_string())
-        ),
-        format!("Sort key: {:?}", draft.sort_key),
-        format!("Sort direction: {:?}", draft.sort_direction),
-        format!(
-            "Show hidden: {}",
-            if draft.show_hidden { "Yes" } else { "No" }
-        ),
-        format!(
-            "Keymap: {}",
-            if draft.use_custom_keymap {
-                "Custom"
-            } else {
-                "Default"
-            }
-        ),
+        format!("Sort: {:?}", draft.sort_key),
     ];
     let mut lines: Vec<_> = values
         .iter()
@@ -863,9 +836,11 @@ fn render_settings(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         })
         .collect();
     lines.push(Line::raw(""));
-    lines.push(Line::raw("Left/Right Change  Enter Apply  Esc Cancel"));
+    lines.push(Line::raw(
+        "Up/Down Select  Space Change  Enter Apply  Esc Cancel",
+    ));
     frame.render_widget(
-        Paragraph::new(lines).block(dialog_block(" Settings Preview ")),
+        Paragraph::new(lines).block(dialog_block(" Settings ")),
         area,
     );
 }
@@ -1542,9 +1517,10 @@ fn render_main(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics)
                 EntryKind::Other => "OTHER",
             };
             format!(
-                "{}  {} {kind}",
+                "{}  {} {kind}{}",
                 entry.display_name(),
-                human_size(entry.size)
+                human_size(entry.size),
+                format_permissions(entry)
             )
         })
         .unwrap_or_else(|| "(no items)".to_string());
@@ -1694,91 +1670,90 @@ fn render_long_view(
     metrics: &LayoutMetrics,
     page_start: usize,
 ) {
-    let Some(first) = metrics.columns.first() else {
-        return;
-    };
-    let Some(last) = metrics.columns.last() else {
-        return;
-    };
-    let area = Rect::new(
-        first.x,
-        first.y,
-        last.x + last.width - first.x,
-        first.height,
-    );
-    let width = area.width as usize;
-    let show_attr = width >= 92;
-    let show_time = width >= 72;
-    let show_date = width >= 62;
-    let fixed =
-        10 + usize::from(show_attr) * 6 + usize::from(show_time) * 7 + usize::from(show_date) * 7;
-    let name_width = width.saturating_sub(fixed).max(8);
-    let mut lines = vec![Line::raw(format!(
-        "{} {:>9}{}{}{}",
-        pad_or_truncate("  Name", name_width),
-        "Size",
-        if show_date { "   Date" } else { "" },
-        if show_time { "   Time" } else { "" },
-        if show_attr { "   Attr" } else { "" },
-    ))];
-    for (offset, entry) in state
-        .entries
-        .iter()
-        .skip(page_start)
-        .take(area.height.saturating_sub(1) as usize)
-        .enumerate()
-    {
-        let modified = entry.local_modified;
-        let decoration = state
-            .plugin_decorations
-            .get(&entry.path.display().to_string());
-        let reserved = decoration
-            .map_or(FILE_STATUS_GUTTER_CELLS, |value| {
-                usize::from(value.reserved_cells).max(FILE_STATUS_GUTTER_CELLS)
-            })
-            .min(width);
-        let text = format!(
+    for (column_index, column) in metrics.columns.iter().enumerate() {
+        let has_separator = column_index + 1 < metrics.columns.len();
+        let width = column.width.saturating_sub(u16::from(has_separator)) as usize;
+        let show_attr = width >= 92;
+        let show_time = width >= 72;
+        let show_date = width >= 62;
+        let fixed = 10
+            + usize::from(show_attr) * 6
+            + usize::from(show_time) * 7
+            + usize::from(show_date) * 7;
+        let name_width = width.saturating_sub(fixed).max(8);
+        let mut lines = vec![Line::raw(format!(
             "{} {:>9}{}{}{}",
-            pad_or_truncate(&entry.display_name(), name_width.saturating_sub(reserved)),
-            match entry.kind {
-                EntryKind::Directory => "<DIR>".to_string(),
-                EntryKind::Parent => "<UP>".to_string(),
-                _ => human_size(entry.size),
-            },
-            if show_date {
-                modified
-                    .map(|value| format!(" {:02}-{:02}", value.month, value.day))
-                    .unwrap_or_else(|| " -----".to_string())
-            } else {
-                String::new()
-            },
-            if show_time {
-                modified
-                    .map(|value| format!(" {:02}:{:02}", value.hour, value.minute))
-                    .unwrap_or_else(|| " --:--".to_string())
-            } else {
-                String::new()
-            },
-            if show_attr {
-                format!("   {}", format_attributes(entry))
-            } else {
-                String::new()
-            },
+            pad_or_truncate("  Name", name_width),
+            "Size",
+            if show_date { "   Date" } else { "" },
+            if show_time { "   Time" } else { "" },
+            if show_attr { "   Attr" } else { "" },
+        ))];
+        for row in 0..metrics.rows_per_column {
+            let index = page_start + column_index * metrics.rows_per_column + row;
+            let Some(entry) = state.entries.get(index) else {
+                lines.push(Line::raw(""));
+                continue;
+            };
+            let modified = entry.local_modified;
+            let decoration = state
+                .plugin_decorations
+                .get(&entry.path.display().to_string());
+            let reserved = decoration
+                .map_or(FILE_STATUS_GUTTER_CELLS, |value| {
+                    usize::from(value.reserved_cells).max(FILE_STATUS_GUTTER_CELLS)
+                })
+                .min(width);
+            let text = format!(
+                "{} {:>9}{}{}{}",
+                pad_or_truncate(&entry.display_name(), name_width.saturating_sub(reserved)),
+                match entry.kind {
+                    EntryKind::Directory => "<DIR>".to_string(),
+                    EntryKind::Parent => "<UP>".to_string(),
+                    _ => human_size(entry.size),
+                },
+                if show_date {
+                    modified
+                        .map(|value| format!(" {:02}-{:02}", value.month, value.day))
+                        .unwrap_or_else(|| " -----".to_string())
+                } else {
+                    String::new()
+                },
+                if show_time {
+                    modified
+                        .map(|value| format!(" {:02}:{:02}", value.hour, value.minute))
+                        .unwrap_or_else(|| " --:--".to_string())
+                } else {
+                    String::new()
+                },
+                if show_attr {
+                    format!("   {}", format_attributes(entry))
+                } else {
+                    String::new()
+                },
+            );
+            let selected = index == state.selected;
+            lines.push(decorated_line(
+                text,
+                width,
+                decoration,
+                palette::entry(entry, selected, state.marked.contains(&entry.path)),
+                selected,
+            ));
+        }
+        frame.render_widget(
+            Paragraph::new(lines).style(palette::role(ThemeRole::MainBackground)),
+            *column,
         );
-        let index = page_start + offset;
-        let selected = index == state.selected;
-        lines.push(decorated_line(
-            text,
-            width,
-            decoration,
-            palette::entry(entry, selected, state.marked.contains(&entry.path)),
-            selected,
-        ));
+        if has_separator {
+            frame.render_widget(
+                Block::default()
+                    .borders(Borders::RIGHT)
+                    .border_style(palette::role(ThemeRole::ColumnSeparator)),
+                *column,
+            );
+        }
     }
-    frame.render_widget(
-        Paragraph::new(lines).style(palette::role(ThemeRole::MainBackground)),
-        area,
-    );
 }
 
 fn render_status_line(frame: &mut Frame<'_>, text: impl AsRef<str>, area: Rect, style: Style) {
@@ -1788,12 +1763,7 @@ fn render_status_line(frame: &mut Frame<'_>, text: impl AsRef<str>, area: Rect, 
     );
 }
 
-fn render_help(
-    frame: &mut Frame<'_>,
-    viewport: Rect,
-    registry: &CommandRegistry,
-    plugins: &[crate::app::command_registry::PluginCommandHint],
-) {
+fn render_help(frame: &mut Frame<'_>, viewport: Rect) {
     frame.render_widget(Clear, viewport);
     frame.render_widget(
         Block::default()
@@ -1810,30 +1780,23 @@ fn render_help(
         viewport.width.saturating_sub(2),
         viewport.height.saturating_sub(2),
     );
-    let column_width = inner.width / 3;
+    let column_width = inner.width / 2;
     let areas = [
         Rect::new(inner.x, inner.y, column_width, inner.height),
         Rect::new(
             inner.x.saturating_add(column_width),
             inner.y,
-            column_width,
-            inner.height,
-        ),
-        Rect::new(
-            inner.x.saturating_add(column_width.saturating_mul(2)),
-            inner.y,
-            inner.width.saturating_sub(column_width.saturating_mul(2)),
+            inner.width.saturating_sub(column_width),
             inner.height,
         ),
     ];
 
-    let mut functions = vec!["F1-F12 Commands".to_string()];
-    functions.extend(
-        registry
-            .function_commands()
-            .map(|command| format!("{:<6} {}", command.key.display(), command.label)),
-    );
-    functions.extend([
+    let functions = vec![
+        "Modes".to_string(),
+        "Ctrl+B Amazon Build".to_string(),
+        "Ctrl+G Git Status".to_string(),
+        "Ctrl+F Favorites".to_string(),
+        "Esc Exit mode".to_string(),
         String::new(),
         "Navigation / Global".to_string(),
         "Arrows/Pg/Home/End Browse".to_string(),
@@ -1842,92 +1805,28 @@ fn render_help(
         "Esc Clear Selection".to_string(),
         "Ctrl+R Refresh  Ctrl+Shift+S Sort".to_string(),
         "Ctrl+H Hidden  Tab View".to_string(),
-        "Alt+O Settings  Ctrl+Q Quit".to_string(),
+        "F12/Alt+O Settings  Ctrl+Q Quit".to_string(),
         "Esc or F1 Close Help".to_string(),
-    ]);
+    ];
 
-    let mut git_shortcuts = vec!["Ctrl+F1-F12 Git Commands".to_string()];
-    git_shortcuts.extend(
-        registry
-            .commands()
-            .iter()
-            .filter(|command| {
-                command.key.control
-                    && matches!(command.key.code, crate::input::key::KeyCode::Function(_))
-            })
-            .map(|command| {
-                let label = match command.id {
-                    CommandId::GitShortcutStatus => "Git Status",
-                    CommandId::GitShortcutDiff => "Git Diff",
-                    CommandId::GitShortcutAdd => "Git Add",
-                    CommandId::GitShortcutUnstage => "Git Unstage",
-                    CommandId::GitShortcutCommit => "Git Commit",
-                    CommandId::GitShortcutAmend => "Git Amend",
-                    CommandId::GitShortcutRebase => "Git Rebase",
-                    CommandId::GitShortcutFetch => "Git Fetch",
-                    CommandId::GitShortcutLog => "Git Log",
-                    CommandId::GitShortcutStash => "Git Stash",
-                    CommandId::GitShortcutBranches => "Git Branches",
-                    CommandId::GitShortcutRefresh => "Git Refresh",
-                    _ => command.label,
-                };
-                format!("{} {label}", command.key.display())
-            }),
-    );
-    git_shortcuts.extend([
-        String::new(),
+    let git_markers = vec![
         "Git File Markers".to_string(),
         "M Modified   A Added".to_string(),
         "D Deleted    R Renamed".to_string(),
         "? Untracked  ! Conflict".to_string(),
-    ]);
-    if !plugins.is_empty() {
-        git_shortcuts.extend([String::new(), "Plugin Commands".to_string()]);
-        git_shortcuts.extend(plugins.iter().take(2).map(|command| {
-            let key = command
-                .key
-                .map_or("(no key)".to_string(), |key| key.display());
-            format!("{key} {}", command.label)
-        }));
-    }
-
-    let git_mode = vec![
-        "Git Status Mode".to_string(),
-        "Ctrl+G / Ctrl+F1 Open".to_string(),
-        "Arrows/Pg/Home/End Select".to_string(),
-        "Space Mark   R Refresh".to_string(),
-        "Enter/F3 Diff".to_string(),
-        "F5 Stage     F6 Unstage".to_string(),
-        "F7 Commit    F8 Amend".to_string(),
-        "F9 Stash     F10 Log".to_string(),
-        "F11 Branch   F12 Discard".to_string(),
         String::new(),
-        "Git Subviews".to_string(),
-        "Diff: Ctrl+F Find, F3 Next".to_string(),
-        "Stash: F5 Apply, F7 Save".to_string(),
-        "       F8 Drop".to_string(),
-        "Branch: Enter Switch".to_string(),
-        "        F7 New, F8 Rebase".to_string(),
-        "Log: Enter/F3 Detail".to_string(),
-        String::new(),
-        "Ctrl+F6 Amend HEAD".to_string(),
-        "  staged changes, keep msg".to_string(),
-        "Ctrl+F7 Choose rebase target".to_string(),
-        "Ctrl+F8 Fetch all / prune".to_string(),
+        "Mode Help".to_string(),
+        "Each mode shows its commands in the footer.".to_string(),
     ];
 
-    for (index, (area, lines)) in areas
-        .into_iter()
-        .zip([functions, git_shortcuts, git_mode])
-        .enumerate()
-    {
+    for (index, (area, lines)) in areas.into_iter().zip([functions, git_markers]).enumerate() {
         let width = area.width.saturating_sub(1) as usize;
         let lines = lines
             .into_iter()
             .take(area.height as usize)
             .map(|line| Line::raw(pad_or_truncate(&line, width)))
             .collect::<Vec<_>>();
-        let block = if index < 2 {
+        let block = if index == 0 {
             Block::default().borders(Borders::RIGHT)
         } else {
             Block::default()
@@ -1981,9 +1880,7 @@ fn format_entry(entry: &FileEntry, width: usize) -> String {
     let wide = width >= 40;
     let metadata_width = 8;
     let suffix_width = if wide { 12 } else { 0 };
-    let name_width = width
-        .saturating_sub(metadata_width + suffix_width + 1)
-        .min(30);
+    let name_width = width.saturating_sub(metadata_width + suffix_width + 1);
     let compact = format!(
         "{} {:>metadata_width$}",
         pad_or_truncate(&name, name_width),
@@ -2019,6 +1916,28 @@ fn format_attributes(entry: &FileEntry) -> String {
     .into_iter()
     .map(|(enabled, character)| if enabled { character } else { '-' })
     .collect()
+}
+
+fn format_permissions(entry: &FileEntry) -> String {
+    let Some(mode) = entry.attributes.unix_mode else {
+        return String::new();
+    };
+    let symbols = [
+        (0o400, 'r'),
+        (0o200, 'w'),
+        (0o100, 'x'),
+        (0o040, 'r'),
+        (0o020, 'w'),
+        (0o010, 'x'),
+        (0o004, 'r'),
+        (0o002, 'w'),
+        (0o001, 'x'),
+    ];
+    let bits = symbols
+        .into_iter()
+        .map(|(bit, symbol)| if mode & bit != 0 { symbol } else { '-' })
+        .collect::<String>();
+    format!("  {bits}")
 }
 
 fn human_size(bytes: u64) -> String {
@@ -2063,10 +1982,11 @@ mod tests {
     fn rendered(state: &AppState, width: u16, height: u16) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
-        let metrics = crate::layout::calculate_for_entries(
+        let metrics = crate::layout::calculate_for_view(
             state.viewport,
             state.layout_settings,
             state.entries.len(),
+            state.long_view,
         );
         terminal
             .draw(|frame| render(frame, state, &metrics))
@@ -2087,6 +2007,7 @@ mod tests {
             current_path: PathBuf::from("/work/한글-folder"),
             entries,
             selected: 0,
+            directory_selection_history: std::collections::HashMap::new(),
             marked: HashSet::new(),
             type_search: None,
             viewport: Viewport { width, height },
@@ -2173,6 +2094,22 @@ mod tests {
             .collect();
         assert!(text.starts_with("  main.rs"));
         assert_eq!(crate::layout::text::cell_width(&text), 16);
+    }
+
+    #[test]
+    fn wide_file_row_uses_the_column_width_before_the_timestamp() {
+        let mut file = entry("main.rs", EntryKind::File, 1);
+        file.local_modified = Some(crate::fs::LocalMinute {
+            year: 2026,
+            month: 7,
+            day: 28,
+            hour: 22,
+            minute: 4,
+        });
+
+        let text = format_entry(&file, 80);
+        assert_eq!(crate::layout::text::cell_width(&text), 80);
+        assert!(text.ends_with("07-28 22:04"));
     }
 
     #[test]
@@ -2342,7 +2279,7 @@ mod tests {
         state.screen = Screen::AmazonBuild;
         let output = rendered(&state, 80, 25);
         assert!(output.contains("[AMAZON BUILD]"));
-        assert!(output.contains("Brazil Build"));
+        assert!(output.contains("BB Build"));
         assert!(output.contains("git push"));
         assert!(output.contains("F3 Run"));
 
@@ -2409,6 +2346,7 @@ mod tests {
             current_path: PathBuf::from("/work"),
             entries,
             selected: 2,
+            directory_selection_history: std::collections::HashMap::new(),
             marked: HashSet::from([PathBuf::from("/work/FILE002.TXT")]),
             type_search: None,
             viewport: Viewport {
@@ -2530,7 +2468,7 @@ mod tests {
         assert!(lines[metrics.item_detail.y as usize].contains("1 File"));
         assert!(lines[metrics.item_detail.y as usize].contains("Free"));
         assert!(lines[metrics.function_bar.y as usize].contains("F1 Help"));
-        assert!(lines[metrics.function_bar.y as usize].contains("F12 Menu"));
+        assert!(lines[metrics.function_bar.y as usize].contains("F12 Settings"));
     }
 
     #[test]
@@ -2644,8 +2582,9 @@ mod tests {
         assert!(rendered(&state, 100, 30).contains("Mdir4 Menu"));
         crate::app::reduce(&mut state, crate::app::Action::ShowSettings);
         let settings = rendered(&state, 100, 30);
-        assert!(settings.contains("Settings Preview"));
-        assert!(settings.contains("Keymap"));
+        assert!(settings.contains("Settings"));
+        assert!(settings.contains("Hide dotfiles"));
+        assert!(settings.contains("Sort:"));
     }
 
     #[test]
@@ -2726,18 +2665,53 @@ mod tests {
     }
 
     #[test]
-    fn help_explains_ctrl_function_keys_and_git_modes() {
+    fn help_lists_mode_entry_keys_and_git_file_markers() {
         let mut state = state_with(Vec::new(), 80, 25);
         state.screen = Screen::Help;
 
         let output = rendered(&state, 80, 25);
-        assert!(output.contains("Ctrl+F1-F12 Git Commands"));
-        assert!(output.contains("Ctrl+F1 Git Status"));
-        assert!(output.contains("Ctrl+F12 Git Refresh"));
-        assert!(output.contains("Git Status Mode"));
-        assert!(output.contains("F5 Stage"));
-        assert!(output.contains("Stash: F5 Apply"));
-        assert!(output.contains("F7 New, F8 Rebase"));
+        assert!(output.contains("Ctrl+B Amazon Build"));
+        assert!(output.contains("Ctrl+G Git Status"));
+        assert!(output.contains("Ctrl+F Favorites"));
+        assert!(output.contains("Esc Exit mode"));
+        assert!(output.contains("Git File Markers"));
+        assert!(output.contains("M Modified   A Added"));
+        assert!(!output.contains("F1-F12 Commands"));
+        assert!(!output.contains("Ctrl+F1-F12 Git Commands"));
+    }
+
+    #[test]
+    fn item_detail_formats_unix_permissions() {
+        let mut file = entry("script.sh", EntryKind::File, 1);
+        file.attributes.unix_mode = Some(0o755);
+        assert_eq!(format_permissions(&file), "  rwxr-xr-x");
+
+        file.attributes.unix_mode = Some(0o640);
+        assert_eq!(format_permissions(&file), "  rw-r-----");
+    }
+
+    #[test]
+    fn wide_long_view_uses_two_independent_detail_columns() {
+        let entries = (0..15)
+            .map(|index| entry(&format!("file-{index:02}.txt"), EntryKind::File, 1))
+            .collect();
+        let mut state = state_with(entries, 128, 25);
+        state.long_view = true;
+        let metrics = crate::layout::calculate_for_view(
+            state.viewport,
+            state.layout_settings,
+            state.entries.len(),
+            state.long_view,
+        );
+        assert_eq!(metrics.columns.len(), 2);
+        assert_eq!(metrics.rows_per_column, 8);
+
+        let output = rendered(&state, 128, 25);
+        let header = output.lines().nth(metrics.list.y as usize).unwrap();
+        assert_eq!(header.matches("Name").count(), 2);
+        let first_row = output.lines().nth(metrics.list.y as usize + 1).unwrap();
+        assert!(first_row.contains("file-00.txt"));
+        assert!(first_row.contains("file-08.txt"));
     }
 
     #[test]
