@@ -103,6 +103,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
     render_main(frame, state, metrics);
     match state.screen {
         Screen::Help => render_help(frame, metrics.viewport),
+        Screen::Locate => render_locate(frame, state, metrics.viewport),
         Screen::QuitConfirm => render_quit_confirmation(frame, metrics.viewport),
         Screen::InputDialog => render_input_dialog(frame, state, metrics.viewport),
         Screen::ConfirmDialog => render_confirm_dialog(frame, state, metrics.viewport),
@@ -1344,6 +1345,90 @@ fn render_input_dialog(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) 
     }
 }
 
+fn render_locate(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
+    let Some(locate) = &state.locate else {
+        return;
+    };
+    let area = viewport;
+    frame.render_widget(Clear, area);
+    frame.render_widget(dialog_block(" Locate Project Files "), area);
+    let inner_x = area.x.saturating_add(1);
+    let width = area.width.saturating_sub(2) as usize;
+    let input = format!("Locate: {}", locate.query);
+    frame.render_widget(
+        Paragraph::new(pad_or_truncate(&input, width)),
+        Rect::new(
+            inner_x,
+            area.y.saturating_add(1),
+            area.width.saturating_sub(2),
+            1,
+        ),
+    );
+    let status = match &locate.phase {
+        crate::model::locate::LocatePhase::Indexing => "Indexing project...".to_string(),
+        crate::model::locate::LocatePhase::Ready { cached: true } => {
+            format!("Cached index · {} matches", locate.results.len())
+        }
+        crate::model::locate::LocatePhase::Ready { cached: false } => {
+            format!("Ready · {} matches", locate.results.len())
+        }
+        crate::model::locate::LocatePhase::Error(error) => format!("Index error: {error}"),
+    };
+    frame.render_widget(
+        Paragraph::new(pad_or_truncate(&status, width)),
+        Rect::new(
+            inner_x,
+            area.y.saturating_add(2),
+            area.width.saturating_sub(2),
+            1,
+        ),
+    );
+    let rows = area.height.saturating_sub(6) as usize;
+    let start = locate.selected.saturating_sub(rows.saturating_sub(1));
+    let lines = locate
+        .results
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(rows)
+        .map(|(index, result)| {
+            let prefix = if index == locate.selected { "> " } else { "  " };
+            let role = if index == locate.selected {
+                ThemeRole::EntryCursor
+            } else {
+                ThemeRole::EntryFile
+            };
+            Line::from(Span::styled(
+                pad_or_truncate(&format!("{prefix}{}", result.display), width),
+                palette::role(role),
+            ))
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(lines),
+        Rect::new(
+            inner_x,
+            area.y.saturating_add(3),
+            area.width.saturating_sub(2),
+            area.height.saturating_sub(5),
+        ),
+    );
+    frame.render_widget(
+        Paragraph::new("Up/Down Select  Enter Go to file  Ctrl+R Reindex  Esc Cancel"),
+        Rect::new(
+            inner_x,
+            area.y.saturating_add(area.height.saturating_sub(2)),
+            area.width.saturating_sub(2),
+            1,
+        ),
+    );
+    let cursor_x =
+        (cell_width("Locate: ") + cell_width(&locate.query)).min(width.saturating_sub(1)) as u16;
+    if area.width > 2 {
+        frame.set_cursor_position((inner_x.saturating_add(cursor_x), area.y.saturating_add(1)));
+    }
+}
+
 fn visible_input(value: &str, cursor: usize, max_cells: usize) -> (String, u16) {
     if max_cells == 0 {
         return (String::new(), 0);
@@ -2077,6 +2162,9 @@ mod tests {
             directory_selection_history: std::collections::HashMap::new(),
             marked: HashSet::new(),
             type_search: None,
+            locate: None,
+            locate_generation: 0,
+            pending_reveal: None,
             viewport: Viewport { width, height },
             layout_settings: crate::layout::LayoutSettings::default(),
             screen: Screen::Main,
@@ -2420,6 +2508,9 @@ mod tests {
             directory_selection_history: std::collections::HashMap::new(),
             marked: HashSet::from([PathBuf::from("/work/FILE002.TXT")]),
             type_search: None,
+            locate: None,
+            locate_generation: 0,
+            pending_reveal: None,
             viewport: Viewport {
                 width: 80,
                 height: 25,

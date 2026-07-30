@@ -232,6 +232,7 @@ fn run_loop(
         Arc::new(SystemDiskInfo),
         Arc::new(SystemFileLauncher),
     );
+    let locate_worker = LocateWorker::spawn();
     let mut dirty = true;
     let mut foreground_editors = VecDeque::new();
     let mut foreground_shell_commands = VecDeque::new();
@@ -242,6 +243,7 @@ fn run_loop(
                 &mut state,
                 &mut actions,
                 &worker,
+                &locate_worker,
                 &mut foreground_editors,
                 &mut foreground_shell_commands,
             );
@@ -280,6 +282,9 @@ fn run_loop(
             dirty = true;
         }
         while let Some(action) = worker.try_action() {
+            actions.push_back(action);
+        }
+        while let Some(action) = locate_worker.try_action() {
             actions.push_back(action);
         }
         if dirty {
@@ -323,6 +328,7 @@ fn drain_actions(
     state: &mut AppState,
     actions: &mut VecDeque<Action>,
     worker: &EffectWorker,
+    locate_worker: &LocateWorker,
     foreground_editors: &mut VecDeque<PathBuf>,
     foreground_shell_commands: &mut VecDeque<ShellCommand>,
 ) -> bool {
@@ -331,6 +337,42 @@ fn drain_actions(
         dirty |= !matches!(action, Action::Tick);
         for effect in app::reduce(state, action) {
             match effect {
+                Effect::LoadLocateIndex {
+                    start,
+                    generation,
+                    force_rebuild,
+                } => {
+                    if locate_worker
+                        .submit(LocateRequest::Load {
+                            start,
+                            generation,
+                            force_rebuild,
+                        })
+                        .is_err()
+                    {
+                        state.message =
+                            Some("Locate worker is busy; try again shortly.".to_string());
+                    }
+                }
+                Effect::SearchLocate {
+                    root,
+                    index_generation,
+                    query_generation,
+                    query,
+                } => {
+                    if locate_worker
+                        .submit(LocateRequest::Search {
+                            root,
+                            index_generation,
+                            query_generation,
+                            query,
+                        })
+                        .is_err()
+                    {
+                        state.message =
+                            Some("Locate worker is busy; try again shortly.".to_string());
+                    }
+                }
                 Effect::LoadEditor(path) => foreground_editors.push_back(path),
                 Effect::RunShellCommand { directory, command } => {
                     foreground_shell_commands.push_back(ShellCommand {
@@ -553,6 +595,119 @@ enum WorkerRequest {
     Stop,
 }
 
+#[derive(Debug)]
+enum LocateRequest {
+    Load {
+        start: PathBuf,
+        generation: u64,
+        force_rebuild: bool,
+    },
+    Search {
+        root: PathBuf,
+        index_generation: u64,
+        query_generation: u64,
+        query: String,
+    },
+    Stop,
+}
+
+struct LocateWorker {
+    requests: mpsc::SyncSender<LocateRequest>,
+    completions: mpsc::Receiver<Action>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl LocateWorker {
+    fn spawn() -> Self {
+        let (request_sender, request_receiver) = mpsc::sync_channel(16);
+        let (completion_sender, completion_receiver) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut current = None;
+            while let Ok(request) = request_receiver.recv() {
+                match request {
+                    LocateRequest::Stop => break,
+                    LocateRequest::Load {
+                        start,
+                        generation,
+                        force_rebuild,
+                    } => {
+                        let root = crate::locate::discover_root(&start);
+                        match crate::locate::load_or_build(&root, force_rebuild) {
+                            Ok((index, cached)) => {
+                                let truncated = index.truncated;
+                                current = Some((index.root.clone(), generation, index));
+                                if completion_sender
+                                    .send(Action::LocateIndexLoaded {
+                                        root,
+                                        generation,
+                                        cached,
+                                        truncated,
+                                    })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            Err(error) => {
+                                if completion_sender
+                                    .send(Action::LocateIndexFailed { generation, error })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    LocateRequest::Search {
+                        root,
+                        index_generation,
+                        query_generation,
+                        query,
+                    } => {
+                        let Some((current_root, current_generation, index)) = &current else {
+                            continue;
+                        };
+                        if *current_root != root || *current_generation != index_generation {
+                            continue;
+                        }
+                        let results = index.search(&query, 100);
+                        if completion_sender
+                            .send(Action::LocateSearchCompleted {
+                                index_generation,
+                                query_generation,
+                                results,
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        Self {
+            requests: request_sender,
+            completions: completion_receiver,
+            handle: Some(handle),
+        }
+    }
+
+    fn submit(&self, request: LocateRequest) -> Result<(), ()> {
+        self.requests.try_send(request).map_err(|_| ())
+    }
+
+    fn try_action(&self) -> Option<Action> {
+        self.completions.try_recv().ok()
+    }
+}
+
+impl Drop for LocateWorker {
+    fn drop(&mut self) {
+        let _ = self.requests.try_send(LocateRequest::Stop);
+        let _ = self.handle.take();
+    }
+}
+
 struct EffectWorker {
     requests: mpsc::SyncSender<WorkerRequest>,
     completions: mpsc::Receiver<Action>,
@@ -587,6 +742,9 @@ impl EffectWorker {
                     break;
                 };
                 let action = match effect {
+                    Effect::LoadLocateIndex { .. } | Effect::SearchLocate { .. } => {
+                        unreachable!("Locate effects are owned by LocateWorker")
+                    }
                     Effect::CancelOperation => continue,
                     Effect::ResolveConflict(_) => continue,
                     Effect::RunShellCommand { .. } => Action::ShellCommandFinished(Err(
@@ -1518,6 +1676,9 @@ mod tests {
             directory_selection_history: std::collections::HashMap::new(),
             marked: HashSet::new(),
             type_search: None,
+            locate: None,
+            locate_generation: 0,
+            pending_reveal: None,
             viewport: Viewport {
                 width: 80,
                 height: 25,
@@ -1762,6 +1923,7 @@ mod tests {
             Arc::new(FixedDiskInfo(0)),
             Arc::new(RecordingLauncher::default()),
         );
+        let locate_worker = LocateWorker::spawn();
         let mut app = state(Screen::Main);
         let mut actions = VecDeque::from([Action::Tick]);
         let mut foreground_editors = VecDeque::new();
@@ -1770,6 +1932,7 @@ mod tests {
             &mut app,
             &mut actions,
             &worker,
+            &locate_worker,
             &mut foreground_editors,
             &mut foreground_shell_commands,
         ));

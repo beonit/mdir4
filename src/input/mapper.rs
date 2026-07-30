@@ -303,6 +303,53 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
             _ => None,
         };
     }
+    if screen == Screen::Locate {
+        return match chord {
+            KeyChord {
+                code: KeyCode::Escape,
+                control: false,
+                alt: false,
+                ..
+            } => Some(Action::LocateCancel),
+            KeyChord {
+                code: KeyCode::Enter,
+                control: false,
+                alt: false,
+                ..
+            } => Some(Action::LocateConfirm),
+            KeyChord {
+                code: KeyCode::Backspace,
+                control: false,
+                alt: false,
+                ..
+            } => Some(Action::LocateBackspace),
+            KeyChord {
+                code: KeyCode::Up,
+                control: false,
+                alt: false,
+                ..
+            } => Some(Action::LocateMove(-1)),
+            KeyChord {
+                code: KeyCode::Down,
+                control: false,
+                alt: false,
+                ..
+            } => Some(Action::LocateMove(1)),
+            KeyChord {
+                code: KeyCode::Character('r' | 'R'),
+                control: true,
+                alt: false,
+                ..
+            } => Some(Action::LocateRebuild),
+            KeyChord {
+                code: KeyCode::Character(character),
+                control: false,
+                alt: false,
+                ..
+            } => Some(Action::LocateCharacter(character)),
+            _ => None,
+        };
+    }
     if screen == Screen::InputDialog {
         return match chord {
             KeyChord {

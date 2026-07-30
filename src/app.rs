@@ -25,6 +25,7 @@ use crate::{
         dialog::{ConfirmDialog, ConfirmOperation, InputDialog, InputPurpose},
         directory::{DirectoryListing, SortDirection, SortKey, sort_entries},
         editor::EditorBuffer,
+        locate::{LocatePhase, LocateResult, LocateState},
         operation::OperationSummary,
         selection,
         viewer::ViewerState,
@@ -37,6 +38,7 @@ use crate::{
 pub enum Screen {
     #[default]
     Main,
+    Locate,
     Help,
     QuitConfirm,
     InputDialog,
@@ -83,6 +85,28 @@ pub enum Action {
     },
     Tick,
     TypeSearch(char),
+    ShowLocate,
+    LocateCharacter(char),
+    LocateBackspace,
+    LocateMove(i32),
+    LocateConfirm,
+    LocateCancel,
+    LocateRebuild,
+    LocateIndexLoaded {
+        root: PathBuf,
+        generation: u64,
+        cached: bool,
+        truncated: bool,
+    },
+    LocateIndexFailed {
+        generation: u64,
+        error: String,
+    },
+    LocateSearchCompleted {
+        index_generation: u64,
+        query_generation: u64,
+        results: Vec<LocateResult>,
+    },
     Move(Direction),
     Page(PageDirection),
     Home,
@@ -335,6 +359,17 @@ pub enum Action {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     LoadDirectory(PathBuf),
+    LoadLocateIndex {
+        start: PathBuf,
+        generation: u64,
+        force_rebuild: bool,
+    },
+    SearchLocate {
+        root: PathBuf,
+        index_generation: u64,
+        query_generation: u64,
+        query: String,
+    },
     LoadDiskInfo(PathBuf),
     LoadDirectoryGitStatus(PathBuf),
     LaunchFile(PathBuf),
@@ -485,6 +520,9 @@ pub struct AppState {
     pub directory_selection_history: HashMap<PathBuf, PathBuf>,
     pub marked: HashSet<EntryId>,
     pub type_search: Option<(String, std::time::Instant)>,
+    pub locate: Option<LocateState>,
+    pub locate_generation: u64,
+    pub pending_reveal: Option<PathBuf>,
     pub viewport: Viewport,
     pub layout_settings: LayoutSettings,
     pub screen: Screen,
@@ -555,6 +593,9 @@ impl AppState {
             directory_selection_history: HashMap::new(),
             marked: HashSet::new(),
             type_search: None,
+            locate: None,
+            locate_generation: 0,
+            pending_reveal: None,
             viewport,
             layout_settings: LayoutSettings::default(),
             screen: Screen::Main,
@@ -684,10 +725,12 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 }
                 state.current_path = path;
                 state.entries = listing.entries;
+                let reveal_target = state.pending_reveal.clone();
                 if !state.show_hidden {
                     state.entries.retain(|entry| {
                         entry.kind == EntryKind::Parent
                             || !entry.name.to_string_lossy().starts_with('.')
+                            || reveal_target.as_ref() == Some(&entry.path)
                     });
                 }
                 sort_entries(&mut state.entries, state.sort_key, state.sort_direction);
@@ -708,7 +751,17 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                         .unwrap_or(0);
                     state.marked.clear();
                 }
-                state.message = attention;
+                if let Some(target) = state.pending_reveal.take() {
+                    if let Some(index) = state.entries.iter().position(|entry| entry.path == target)
+                    {
+                        state.selected = index;
+                        state.message = attention;
+                    } else {
+                        state.message = Some("Located file no longer exists.".to_string());
+                    }
+                } else {
+                    state.message = attention;
+                }
                 state.git_modified_paths.clear();
                 state.plugin_decorations.retain(|_, decoration| {
                     !decoration.text.spans.iter().any(|span| {
@@ -808,6 +861,141 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 state.selected = index;
             }
             state.type_search = Some((query, now));
+        }
+        Action::ShowLocate => {
+            state.locate_generation = state.locate_generation.wrapping_add(1);
+            let generation = state.locate_generation;
+            state.locate = Some(LocateState::new(state.current_path.clone(), generation));
+            state.screen = Screen::Locate;
+            return vec![Effect::LoadLocateIndex {
+                start: state.current_path.clone(),
+                generation,
+                force_rebuild: false,
+            }];
+        }
+        Action::LocateCharacter(character) => {
+            if let Some(locate) = &mut state.locate {
+                locate.query.push(character);
+                locate.query_generation = locate.query_generation.wrapping_add(1);
+                locate.selected = 0;
+                locate.results.clear();
+                if matches!(locate.phase, LocatePhase::Ready { .. }) {
+                    return vec![Effect::SearchLocate {
+                        root: locate.root.clone(),
+                        index_generation: locate.index_generation,
+                        query_generation: locate.query_generation,
+                        query: locate.query.clone(),
+                    }];
+                }
+            }
+        }
+        Action::LocateBackspace => {
+            if let Some(locate) = &mut state.locate {
+                if let Some((index, _)) =
+                    unicode_segmentation::UnicodeSegmentation::grapheme_indices(
+                        locate.query.as_str(),
+                        true,
+                    )
+                    .last()
+                {
+                    locate.query.truncate(index);
+                }
+                locate.query_generation = locate.query_generation.wrapping_add(1);
+                locate.selected = 0;
+                locate.results.clear();
+                if matches!(locate.phase, LocatePhase::Ready { .. }) {
+                    return vec![Effect::SearchLocate {
+                        root: locate.root.clone(),
+                        index_generation: locate.index_generation,
+                        query_generation: locate.query_generation,
+                        query: locate.query.clone(),
+                    }];
+                }
+            }
+        }
+        Action::LocateMove(delta) => {
+            if let Some(locate) = &mut state.locate
+                && !locate.results.is_empty()
+            {
+                let len = locate.results.len() as i32;
+                locate.selected = (locate.selected as i32 + delta).rem_euclid(len) as usize;
+            }
+        }
+        Action::LocateConfirm => {
+            let Some(target) = state
+                .locate
+                .as_ref()
+                .and_then(LocateState::selected_result)
+                .map(|result| result.path.clone())
+            else {
+                return Vec::new();
+            };
+            let Some(parent) = target.parent().map(Path::to_path_buf) else {
+                return Vec::new();
+            };
+            state.locate = None;
+            state.pending_reveal = Some(target);
+            state.screen = Screen::Main;
+            return vec![Effect::LoadDirectory(parent)];
+        }
+        Action::LocateCancel => {
+            state.locate = None;
+            state.screen = Screen::Main;
+        }
+        Action::LocateRebuild => {
+            if let Some(locate) = &mut state.locate {
+                state.locate_generation = state.locate_generation.wrapping_add(1);
+                locate.index_generation = state.locate_generation;
+                locate.phase = LocatePhase::Indexing;
+                locate.results.clear();
+                locate.selected = 0;
+                return vec![Effect::LoadLocateIndex {
+                    start: locate.root.clone(),
+                    generation: locate.index_generation,
+                    force_rebuild: true,
+                }];
+            }
+        }
+        Action::LocateIndexLoaded {
+            root,
+            generation,
+            cached,
+            truncated,
+        } => {
+            if let Some(locate) = &mut state.locate
+                && locate.index_generation == generation
+            {
+                locate.root = root;
+                locate.phase = LocatePhase::Ready { cached };
+                state.message =
+                    truncated.then_some("Locate index is truncated at 250,000 files.".to_string());
+                return vec![Effect::SearchLocate {
+                    root: locate.root.clone(),
+                    index_generation: locate.index_generation,
+                    query_generation: locate.query_generation,
+                    query: locate.query.clone(),
+                }];
+            }
+        }
+        Action::LocateIndexFailed { generation, error } => {
+            if let Some(locate) = &mut state.locate
+                && locate.index_generation == generation
+            {
+                locate.phase = LocatePhase::Error(error);
+            }
+        }
+        Action::LocateSearchCompleted {
+            index_generation,
+            query_generation,
+            results,
+        } => {
+            if let Some(locate) = &mut state.locate
+                && locate.index_generation == index_generation
+                && locate.query_generation == query_generation
+            {
+                locate.results = results;
+                locate.selected = locate.selected.min(locate.results.len().saturating_sub(1));
+            }
         }
         Action::Move(direction) => {
             let metrics = layout::calculate_for_view(
@@ -2982,6 +3170,9 @@ mod tests {
             directory_selection_history: HashMap::new(),
             marked: HashSet::new(),
             type_search: None,
+            locate: None,
+            locate_generation: 0,
+            pending_reveal: None,
             viewport: Viewport {
                 width: 80,
                 height: 25,
@@ -3169,6 +3360,76 @@ mod tests {
         app.type_search = None;
         reduce(&mut app, Action::TypeSearch('R'));
         assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn locate_queries_results_and_enter_reveals_the_file_without_launching_it() {
+        let mut app = state();
+        assert!(matches!(
+            reduce(&mut app, Action::ShowLocate).as_slice(),
+            [Effect::LoadLocateIndex { generation: 1, .. }]
+        ));
+        assert_eq!(app.screen, Screen::Locate);
+        reduce(
+            &mut app,
+            Action::LocateIndexLoaded {
+                root: PathBuf::from("/test"),
+                generation: 1,
+                cached: false,
+                truncated: false,
+            },
+        );
+        reduce(&mut app, Action::LocateCharacter('b'));
+        reduce(
+            &mut app,
+            Action::LocateSearchCompleted {
+                index_generation: 1,
+                query_generation: 1,
+                results: vec![LocateResult {
+                    path: PathBuf::from("/test/nested/book.rs"),
+                    display: "nested/book.rs".into(),
+                    score: 10,
+                }],
+            },
+        );
+        assert_eq!(
+            reduce(&mut app, Action::LocateConfirm),
+            vec![Effect::LoadDirectory(PathBuf::from("/test/nested"))]
+        );
+        assert_eq!(app.screen, Screen::Main);
+        assert_eq!(
+            app.pending_reveal,
+            Some(PathBuf::from("/test/nested/book.rs"))
+        );
+        reduce(
+            &mut app,
+            Action::DirectoryLoaded {
+                path: PathBuf::from("/test/nested"),
+                result: Ok(DirectoryListing {
+                    path: PathBuf::from("/test/nested"),
+                    entries: vec![
+                        FileEntry::new(
+                            PathBuf::from("/test/nested/other.rs"),
+                            "other.rs".into(),
+                            EntryKind::File,
+                            0,
+                        ),
+                        FileEntry::new(
+                            PathBuf::from("/test/nested/book.rs"),
+                            "book.rs".into(),
+                            EntryKind::File,
+                            0,
+                        ),
+                    ],
+                }),
+            },
+        );
+        assert_eq!(app.current_path, PathBuf::from("/test/nested"));
+        assert_eq!(
+            app.selected_entry().map(|entry| &entry.path),
+            Some(&PathBuf::from("/test/nested/book.rs"))
+        );
+        assert!(app.pending_reveal.is_none());
     }
 
     #[test]

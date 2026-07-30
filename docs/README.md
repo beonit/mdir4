@@ -81,6 +81,10 @@ M4 이후 backlog에는 MCD viewport, 외부 `$EDITOR` 연결, Rename 중간 커
 [`preview-pane-implementation-plan.md`](preview-pane-implementation-plan.md)에 있다. 이 트랙은
 승인 전까지 현재 활성 `R1-02` 작업을 선점하지 않는다.
 
+제안된 `Ctrl+L` Project Locate의 path index, cache/SLA와 후속 Symbol/ctags/Full-text 확장
+순서는 [`locate-search-implementation-plan.md`](locate-search-implementation-plan.md)에 있다.
+이 트랙도 `LOC-00` 승인 전까지 현재 활성 릴리스 작업을 선점하지 않는다.
+
 | 문서 | 역할 | 규범성 |
 |---|---|---|
 | [`requirements-original.md`](requirements-original.md) | 최초 요구사항 원문 | 계약에 반영되기 전 참고 |

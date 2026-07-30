@@ -175,6 +175,39 @@ fn main_characters_are_file_name_typeahead_not_refresh_sort_or_hidden_shortcuts(
 }
 
 #[test]
+fn control_l_opens_locate_and_locate_mode_owns_its_editing_keys() {
+    let registry = CommandRegistry::default();
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Main,
+            KeyChord::control(KeyCode::Character('l')),
+            &registry
+        ),
+        Some(Action::ShowLocate)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Locate,
+            KeyChord::plain(KeyCode::Character('a')),
+            &registry
+        ),
+        Some(Action::LocateCharacter('a'))
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::Locate,
+            KeyChord::plain(KeyCode::Backspace),
+            &registry
+        ),
+        Some(Action::LocateBackspace)
+    ));
+    assert!(matches!(
+        mapper::map_chord(Screen::Locate, KeyChord::plain(KeyCode::Enter), &registry),
+        Some(Action::LocateConfirm)
+    ));
+}
+
+#[test]
 fn control_b_opens_amazon_build_and_its_keys_run_the_selected_command() {
     let registry = CommandRegistry::default();
     assert!(matches!(
@@ -430,6 +463,7 @@ fn git_branch_screen_maps_the_selected_target_to_rebase() {
 #[test]
 fn custom_keymap_updates_display_and_mapping_with_item_fallback() {
     let overrides = BTreeMap::from([
+        ("locate".to_string(), "Alt+L".to_string()),
         ("refresh".to_string(), "Ctrl+L".to_string()),
         ("copy".to_string(), "Ctrl+R".to_string()),
         ("move".to_string(), "Ctrl+R".to_string()),

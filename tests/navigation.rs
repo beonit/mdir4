@@ -194,6 +194,9 @@ fn resize_keeps_the_selected_entry_identity() {
         directory_selection_history: std::collections::HashMap::new(),
         marked: HashSet::new(),
         type_search: None,
+        locate: None,
+        locate_generation: 0,
+        pending_reveal: None,
         viewport: Viewport {
             width: 80,
             height: 25,

@@ -64,6 +64,9 @@ fn ten_thousand_entry_navigation_and_render_smoke() {
         directory_selection_history: std::collections::HashMap::new(),
         marked: Default::default(),
         type_search: None,
+        locate: None,
+        locate_generation: 0,
+        pending_reveal: None,
         viewport: Viewport {
             width: 160,
             height: 50,

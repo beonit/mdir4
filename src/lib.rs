@@ -5,6 +5,7 @@ pub mod file_type;
 pub mod fs;
 pub mod input;
 pub mod layout;
+pub mod locate;
 pub mod mcd;
 pub mod model;
 pub mod operations;
