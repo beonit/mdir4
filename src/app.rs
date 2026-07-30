@@ -91,6 +91,7 @@ pub enum Action {
     ToggleMarkAndAdvance,
     SelectAll,
     ClearSelection,
+    DismissSelectionOrRequestQuit,
     Open,
     GoParent,
     Reload,
@@ -2727,6 +2728,13 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 }];
             }
         }
+        Action::DismissSelectionOrRequestQuit => {
+            if !state.marked.is_empty() {
+                state.marked.clear();
+            } else {
+                state.screen = Screen::QuitConfirm;
+            }
+        }
         Action::RequestQuit => state.screen = Screen::QuitConfirm,
         Action::CloseOverlay => {
             if state.screen == Screen::GitStatus
@@ -4006,5 +4014,19 @@ mod tests {
         reduce(&mut app, Action::RequestQuit);
         reduce(&mut app, Action::ConfirmQuit);
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn escape_clears_marks_before_requesting_quit_confirmation() {
+        let mut app = state();
+        app.marked.insert(PathBuf::from("/test/a"));
+
+        reduce(&mut app, Action::DismissSelectionOrRequestQuit);
+        assert!(app.marked.is_empty());
+        assert_eq!(app.screen, Screen::Main);
+
+        reduce(&mut app, Action::DismissSelectionOrRequestQuit);
+        assert_eq!(app.screen, Screen::QuitConfirm);
+        assert!(!app.should_quit);
     }
 }

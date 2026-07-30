@@ -545,7 +545,7 @@ fn action(id: CommandId) -> Action {
         CommandId::SelectAll => Action::SelectAll,
         CommandId::ClearSelection => Action::ClearSelection,
         CommandId::Refresh => Action::Reload,
-        CommandId::Quit => Action::RequestQuit,
+        CommandId::Quit => Action::ConfirmQuit,
         CommandId::Help => Action::ShowHelp,
         CommandId::Rename => Action::ShowRename,
         CommandId::View => Action::ShowViewer,

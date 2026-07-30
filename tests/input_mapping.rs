@@ -212,14 +212,14 @@ fn control_b_opens_amazon_build_and_its_keys_run_the_selected_command() {
 }
 
 #[test]
-fn escape_clears_selection_on_the_main_screen() {
+fn escape_dismisses_selection_or_requests_quit_on_the_main_screen() {
     assert!(matches!(
         mapper::map_chord(
             Screen::Main,
             KeyChord::plain(KeyCode::Escape),
             &CommandRegistry::default()
         ),
-        Some(Action::ClearSelection)
+        Some(Action::DismissSelectionOrRequestQuit)
     ));
 }
 
@@ -556,11 +556,15 @@ fn input_dialog_maps_cursor_and_delete_keys_before_main_commands() {
 }
 
 #[test]
-fn control_q_and_uppercase_control_a_are_normalized() {
+fn control_q_quits_immediately_and_uppercase_control_a_is_normalized() {
     let registry = CommandRegistry::default();
     assert!(matches!(
-        registry.action_for(KeyChord::control(KeyCode::Character('q'))),
-        Some(Action::RequestQuit)
+        mapper::map_chord(
+            Screen::Main,
+            KeyChord::control(KeyCode::Character('q')),
+            &registry
+        ),
+        Some(Action::ConfirmQuit)
     ));
     assert!(matches!(
         registry.action_for(KeyChord::control(KeyCode::Character('A'))),

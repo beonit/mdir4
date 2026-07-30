@@ -1,6 +1,5 @@
 ---
 source: src/ui.rs
-assertion_line: 2662
 expression: "rendered(&basic, 80, 25)"
 ---
 ┌ Mdir4 Help ──────────────────────────────────────────────────────────────────┐
@@ -14,10 +13,10 @@ expression: "rendered(&basic, 80, 25)"
 │Arrows/Pg/Home/End Browse             │                                       │
 │Enter Open / Select <UP> Parent       │                                       │
 │Space/Ins/Ctrl+A Mark                 │                                       │
-│Esc Clear Selection                   │                                       │
+│Esc Clear Selection / Quit Confirm    │                                       │
 │Ctrl+R Refresh  Ctrl+Shift+S Sort     │                                       │
 │Ctrl+H Hidden  Tab View               │                                       │
-│F12/Alt+O Settings  Ctrl+Q Quit       │                                       │
+│F12/Alt+O Settings  Ctrl+Q Quit Now   │                                       │
 │Esc or F1 Close Help                  │                                       │
 │                                      │                                       │
 │                                      │                                       │

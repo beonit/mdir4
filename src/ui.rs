@@ -1869,10 +1869,10 @@ fn render_help(frame: &mut Frame<'_>, viewport: Rect) {
         "Arrows/Pg/Home/End Browse".to_string(),
         "Enter Open / Select <UP> Parent".to_string(),
         "Space/Ins/Ctrl+A Mark".to_string(),
-        "Esc Clear Selection".to_string(),
+        "Esc Clear Selection / Quit Confirm".to_string(),
         "Ctrl+R Refresh  Ctrl+Shift+S Sort".to_string(),
         "Ctrl+H Hidden  Tab View".to_string(),
-        "F12/Alt+O Settings  Ctrl+Q Quit".to_string(),
+        "F12/Alt+O Settings  Ctrl+Q Quit Now".to_string(),
         "Esc or F1 Close Help".to_string(),
     ];
 

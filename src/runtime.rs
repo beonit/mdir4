@@ -141,6 +141,13 @@ fn start_path(explicit: Option<PathBuf>) -> Result<PathBuf, AppError> {
 }
 
 fn write_cwd_file(path: &Path, directory: &Path) -> io::Result<()> {
+    // Navigation can retain a user-facing symlink such as `/local/...`. The shell
+    // integration should receive the physical directory so its next prompt does
+    // not unexpectedly switch path spellings. Keep the original path as a
+    // best-effort fallback if it disappeared while Mdir4 was closing.
+    let directory = directory
+        .canonicalize()
+        .unwrap_or_else(|_| directory.to_path_buf());
     std::fs::write(path, directory.as_os_str().as_encoded_bytes())
 }
 
@@ -1365,6 +1372,30 @@ mod tests {
         assert_eq!(
             std::fs::read(output).unwrap(),
             selected.as_os_str().as_encoded_bytes()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cwd_file_resolves_symbolic_link_directories() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let physical = directory.path().join("physical");
+        let symbolic = directory.path().join("local");
+        let output = directory.path().join("cwd");
+        std::fs::create_dir(&physical).unwrap();
+        symlink(&physical, &symbolic).unwrap();
+
+        write_cwd_file(&output, &symbolic).unwrap();
+
+        assert_eq!(
+            std::fs::read(output).unwrap(),
+            physical
+                .canonicalize()
+                .unwrap()
+                .as_os_str()
+                .as_encoded_bytes()
         );
     }
 

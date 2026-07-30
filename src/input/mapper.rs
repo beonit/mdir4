@@ -11,6 +11,9 @@ pub fn map_key(screen: Screen, event: KeyEvent, registry: &CommandRegistry) -> O
 }
 
 pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) -> Option<Action> {
+    if chord == KeyChord::control(KeyCode::Character('q')) {
+        return Some(Action::ConfirmQuit);
+    }
     if matches!(screen, Screen::Main | Screen::Remote)
         && chord.alt
         && !chord.control
@@ -20,6 +23,9 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
     }
     if screen == Screen::Main && chord == KeyChord::plain(KeyCode::Character('.')) {
         return Some(Action::GoParent);
+    }
+    if screen == Screen::Main && chord == KeyChord::plain(KeyCode::Escape) {
+        return Some(Action::DismissSelectionOrRequestQuit);
     }
     if screen == Screen::Main && chord == KeyChord::plain(KeyCode::Character('!')) {
         return Some(Action::ShowShellCommand);
