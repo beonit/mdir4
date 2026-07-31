@@ -88,11 +88,141 @@ pub struct LayoutMetrics {
     pub too_small: bool,
 }
 
-pub fn calculate(viewport: Viewport, settings: LayoutSettings) -> LayoutMetrics {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShellLayout {
+    pub viewport: Rect,
+    pub path_bar: Rect,
+    pub body: Rect,
+    pub status_bar: Rect,
+    pub function_bar: Rect,
+    pub too_small: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DocumentLayout {
+    pub shell: ShellLayout,
+    pub document: Rect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GitStatusLayout {
+    pub shell: ShellLayout,
+    pub changes: Rect,
+    pub diff_preview: Option<Rect>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GitCommitLayout {
+    pub shell: ShellLayout,
+    pub commit_and_files: Rect,
+    pub separator: Rect,
+    pub diff: Rect,
+}
+
+pub fn calculate_shell(viewport: Viewport) -> ShellLayout {
     let full = Rect::new(0, 0, viewport.width, viewport.height);
     if viewport.width < MIN_WIDTH || viewport.height < MIN_HEIGHT {
-        return LayoutMetrics {
+        return ShellLayout {
             viewport: full,
+            path_bar: Rect::default(),
+            body: Rect::default(),
+            status_bar: Rect::default(),
+            function_bar: Rect::default(),
+            too_small: true,
+        };
+    }
+    let function_rows = if viewport.width >= SINGLE_ROW_FUNCTION_WIDTH {
+        1
+    } else {
+        2
+    };
+    ShellLayout {
+        viewport: full,
+        path_bar: Rect::new(0, 0, viewport.width, 1),
+        body: Rect::new(0, 1, viewport.width, viewport.height - 2 - function_rows),
+        status_bar: Rect::new(0, viewport.height - function_rows - 1, viewport.width, 1),
+        function_bar: Rect::new(
+            0,
+            viewport.height - function_rows,
+            viewport.width,
+            function_rows,
+        ),
+        too_small: false,
+    }
+}
+
+pub fn calculate_document(viewport: Viewport) -> DocumentLayout {
+    let shell = calculate_shell(viewport);
+    DocumentLayout {
+        document: shell.body,
+        shell,
+    }
+}
+
+pub fn calculate_git_status(viewport: Viewport, preview: PreviewLayoutSettings) -> GitStatusLayout {
+    let shell = calculate_shell(viewport);
+    if shell.too_small {
+        return GitStatusLayout {
+            shell,
+            changes: Rect::default(),
+            diff_preview: None,
+        };
+    }
+    let preview_width = (preview.enabled && shell.body.width >= MIN_PREVIEW_WIDTH).then(|| {
+        let requested = shell.body.width * u16::from(preview.width_percent.clamp(35, 65)) / 100;
+        requested.clamp(60, shell.body.width.saturating_sub(60))
+    });
+    let changes_width = preview_width.map_or(shell.body.width, |width| shell.body.width - width);
+    GitStatusLayout {
+        shell,
+        changes: Rect::new(shell.body.x, shell.body.y, changes_width, shell.body.height),
+        diff_preview: preview_width.map(|width| {
+            Rect::new(
+                shell.body.x + changes_width,
+                shell.body.y,
+                width,
+                shell.body.height,
+            )
+        }),
+    }
+}
+
+pub fn calculate_git_commit(viewport: Viewport) -> GitCommitLayout {
+    let shell = calculate_shell(viewport);
+    if shell.too_small {
+        return GitCommitLayout {
+            shell,
+            commit_and_files: Rect::default(),
+            separator: Rect::default(),
+            diff: Rect::default(),
+        };
+    }
+    let available = shell.body.width.saturating_sub(1);
+    let left_width = (available.saturating_mul(42) / 100).clamp(24, available.saturating_sub(32));
+    let right_width = available.saturating_sub(left_width);
+    GitCommitLayout {
+        shell,
+        commit_and_files: Rect::new(shell.body.x, shell.body.y, left_width, shell.body.height),
+        separator: Rect::new(
+            shell.body.x + left_width,
+            shell.body.y,
+            1,
+            shell.body.height,
+        ),
+        diff: Rect::new(
+            shell.body.x + left_width + 1,
+            shell.body.y,
+            right_width,
+            shell.body.height,
+        ),
+    }
+}
+
+pub fn calculate(viewport: Viewport, settings: LayoutSettings) -> LayoutMetrics {
+    let shell = calculate_shell(viewport);
+    if shell.too_small {
+        return LayoutMetrics {
+            viewport: shell.viewport,
             preview: None,
             path_bar: Rect::default(),
             list: Rect::default(),
@@ -108,20 +238,15 @@ pub fn calculate(viewport: Viewport, settings: LayoutSettings) -> LayoutMetrics 
     }
 
     let preview_width =
-        (settings.preview.enabled && viewport.width >= MIN_PREVIEW_WIDTH).then(|| {
+        (settings.preview.enabled && shell.body.width >= MIN_PREVIEW_WIDTH).then(|| {
             let requested =
-                viewport.width * u16::from(settings.preview.width_percent.clamp(35, 65)) / 100;
-            requested.clamp(60, viewport.width.saturating_sub(60))
+                shell.body.width * u16::from(settings.preview.width_percent.clamp(35, 65)) / 100;
+            requested.clamp(60, shell.body.width.saturating_sub(60))
         });
-    let browser_width = preview_width.map_or(viewport.width, |width| viewport.width - width);
-    let function_rows = if viewport.width >= SINGLE_ROW_FUNCTION_WIDTH {
-        1
-    } else {
-        2
-    };
-    let list_height = viewport.height - 2 - function_rows;
-    let list = Rect::new(0, 1, browser_width, list_height);
-    let preview = preview_width.map(|width| Rect::new(browser_width, list.y, width, list.height));
+    let browser_width = preview_width.map_or(shell.body.width, |width| shell.body.width - width);
+    let list = Rect::new(shell.body.x, shell.body.y, browser_width, shell.body.height);
+    let preview = preview_width
+        .map(|width| Rect::new(shell.body.x + browser_width, list.y, width, list.height));
     let mut column_count = match settings.column_count {
         ColumnCountMode::Auto => {
             let target_width = settings.column_width.target_width();
@@ -147,19 +272,14 @@ pub fn calculate(viewport: Viewport, settings: LayoutSettings) -> LayoutMetrics 
     let page_capacity = rows_per_column * columns.len();
 
     LayoutMetrics {
-        viewport: full,
+        viewport: shell.viewport,
         preview,
-        path_bar: Rect::new(0, 0, viewport.width, 1),
+        path_bar: shell.path_bar,
         list,
-        item_detail: Rect::new(0, viewport.height - function_rows - 1, viewport.width, 1),
+        item_detail: shell.status_bar,
         directory_summary: Rect::default(),
         message_bar: Rect::default(),
-        function_bar: Rect::new(
-            0,
-            viewport.height - function_rows,
-            viewport.width,
-            function_rows,
-        ),
+        function_bar: shell.function_bar,
         columns,
         rows_per_column,
         page_capacity,
@@ -241,13 +361,20 @@ mod tests {
     use super::*;
 
     fn metrics(width: u16, height: u16) -> LayoutMetrics {
-        calculate(Viewport { width, height }, LayoutSettings::default())
+        calculate(
+            Viewport { width, height },
+            settings(ColumnCountMode::Auto, ColumnWidthMode::Normal),
+        )
     }
 
     fn settings(column_count: ColumnCountMode, column_width: ColumnWidthMode) -> LayoutSettings {
         LayoutSettings {
             column_count,
             column_width,
+            preview: PreviewLayoutSettings {
+                enabled: false,
+                ..PreviewLayoutSettings::default()
+            },
             ..LayoutSettings::default()
         }
     }
@@ -265,7 +392,7 @@ mod tests {
             width: 120,
             height: 40,
         };
-        let settings = LayoutSettings::default();
+        let settings = settings(ColumnCountMode::Auto, ColumnWidthMode::Normal);
         let rows = calculate(viewport, settings).rows_per_column;
         let one = calculate_for_entries(viewport, settings, rows);
         assert_eq!(one.columns.len(), 1);
@@ -291,7 +418,7 @@ mod tests {
                 width: MIN_TWO_COLUMN_WIDTH,
                 height: 25,
             },
-            LayoutSettings::default(),
+            settings(ColumnCountMode::Auto, ColumnWidthMode::Normal),
             1,
         );
         assert_eq!(metrics.columns.len(), 2);
@@ -302,7 +429,7 @@ mod tests {
                 width: MIN_TWO_COLUMN_WIDTH,
                 height: 25,
             },
-            LayoutSettings::default(),
+            settings(ColumnCountMode::Auto, ColumnWidthMode::Normal),
             1,
             true,
         );
@@ -317,7 +444,7 @@ mod tests {
                 width: MIN_TWO_COLUMN_WIDTH,
                 height: 25,
             },
-            LayoutSettings::default(),
+            settings(ColumnCountMode::Auto, ColumnWidthMode::Normal),
             15,
         );
         assert_eq!(metrics.columns.len(), 2);
@@ -458,6 +585,60 @@ mod tests {
             .len(),
             6
         );
+    }
+
+    #[test]
+    fn document_layout_uses_full_body_regardless_of_browser_preview_setting() {
+        let viewport = Viewport {
+            width: 160,
+            height: 40,
+        };
+        let browser = calculate(viewport, LayoutSettings::default());
+        assert_eq!(browser.list.width, 80);
+        let document = calculate_document(viewport);
+        assert_eq!(document.document, document.shell.body);
+        assert_eq!(document.document.width, 160);
+        assert_eq!(document.document.right(), document.shell.viewport.right());
+    }
+
+    #[test]
+    fn git_commit_split_covers_the_full_body_without_overlap() {
+        for width in [60, 80, 120, 160, 240] {
+            let layout = calculate_git_commit(Viewport { width, height: 25 });
+            assert!(!layout.shell.too_small);
+            assert_eq!(layout.commit_and_files.right(), layout.separator.x);
+            assert_eq!(layout.separator.right(), layout.diff.x);
+            assert_eq!(layout.diff.right(), layout.shell.body.right());
+            assert_eq!(
+                layout.commit_and_files.width + layout.separator.width + layout.diff.width,
+                layout.shell.body.width
+            );
+            assert!(layout.commit_and_files.width >= 24);
+            assert!(layout.diff.width >= 32);
+        }
+    }
+
+    #[test]
+    fn git_status_preview_is_mode_specific_and_covers_the_body() {
+        let viewport = Viewport {
+            width: 160,
+            height: 25,
+        };
+        let preview = calculate_git_status(viewport, PreviewLayoutSettings::default());
+        assert_eq!(preview.changes.width, 80);
+        assert_eq!(
+            preview.diff_preview.unwrap().right(),
+            preview.shell.body.right()
+        );
+        let without_preview = calculate_git_status(
+            viewport,
+            PreviewLayoutSettings {
+                enabled: false,
+                ..PreviewLayoutSettings::default()
+            },
+        );
+        assert_eq!(without_preview.changes, without_preview.shell.body);
+        assert!(without_preview.diff_preview.is_none());
     }
 
     #[test]

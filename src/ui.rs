@@ -4,7 +4,7 @@ use crate::{
     app::{AppState, Screen},
     fs::{EntryKind, FileEntry},
     layout::{
-        LayoutMetrics,
+        DocumentLayout, GitCommitLayout, GitStatusLayout, LayoutMetrics, ShellLayout, Viewport,
         text::{cell_width, pad_or_truncate, truncate_end},
     },
     theme::schema::ThemeRole,
@@ -45,7 +45,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
             )
         });
     if state.screen == Screen::Favorites || favorite_input || favorite_confirm {
-        render_favorites_mode(frame, state, metrics);
+        render_favorites_mode(frame, state, metrics.viewport);
         if favorite_input {
             render_input_dialog(frame, state, metrics.viewport);
         } else if favorite_confirm {
@@ -63,7 +63,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
             )
         });
     if state.screen == Screen::AmazonBuild || amazon_input {
-        render_amazon_build_mode(frame, state, metrics);
+        render_amazon_build_mode(frame, state, metrics.viewport);
         if amazon_input {
             render_input_dialog(frame, state, metrics.viewport);
         }
@@ -71,7 +71,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
     }
 
     if state.screen == Screen::Viewer {
-        render_viewer(frame, metrics, state);
+        render_viewer(frame, metrics.viewport, state);
         return;
     }
     if state.screen == Screen::InputDialog
@@ -79,7 +79,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
             dialog.purpose == crate::model::dialog::InputPurpose::SearchViewer
         })
     {
-        render_viewer(frame, metrics, state);
+        render_viewer(frame, metrics.viewport, state);
         render_input_dialog(frame, state, metrics.viewport);
         return;
     }
@@ -92,7 +92,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) 
             | Screen::GitStash
             | Screen::GitDiff
     ) {
-        render_git_mode(frame, state, metrics);
+        render_git_mode(frame, state, metrics.viewport);
         return;
     }
     if state.screen == Screen::Remote {
@@ -236,11 +236,16 @@ fn render_remote(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetric
     render_preview_placeholder(frame, state, metrics);
 }
 
-fn render_git_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
-    frame.render_widget(Clear, metrics.viewport);
+fn render_git_mode(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
+    let viewport = Viewport {
+        width: viewport.width,
+        height: viewport.height,
+    };
+    let shell = crate::layout::calculate_shell(viewport);
+    frame.render_widget(Clear, shell.viewport);
     frame.render_widget(
         Block::default().style(palette::role(ThemeRole::MainBackground)),
-        metrics.viewport,
+        shell.viewport,
     );
     let mode = match state.screen {
         Screen::GitStatus => "STATUS",
@@ -254,37 +259,51 @@ fn render_git_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetr
     };
     let path = format!("{}  [GIT: {mode}]", state.current_path.display());
     frame.render_widget(
-        Paragraph::new(pad_or_truncate(&path, metrics.path_bar.width as usize))
+        Paragraph::new(pad_or_truncate(&path, shell.path_bar.width as usize))
             .style(palette::role(ThemeRole::PathBar)),
-        metrics.path_bar,
+        shell.path_bar,
     );
     match state.screen {
-        Screen::GitStatus => render_git_status(frame, state, metrics),
-        Screen::GitLog => render_git_log(frame, state, metrics),
-        Screen::GitLogDetail => render_git_log_detail(frame, state, metrics),
-        Screen::GitBranch => render_git_branches(frame, state, metrics),
-        Screen::GitStash => render_git_stashes(frame, state, metrics),
-        Screen::GitDiff => render_git_diff(frame, state, metrics),
+        Screen::GitStatus => render_git_status(
+            frame,
+            state,
+            &crate::layout::calculate_git_status(viewport, state.layout_settings.preview),
+        ),
+        Screen::GitLog => {
+            render_git_log(frame, state, &crate::layout::calculate_document(viewport))
+        }
+        Screen::GitLogDetail => {
+            render_git_log_detail(frame, state, &crate::layout::calculate_git_commit(viewport))
+        }
+        Screen::GitBranch => {
+            render_git_branches(frame, state, &crate::layout::calculate_document(viewport))
+        }
+        Screen::GitStash => {
+            render_git_stashes(frame, state, &crate::layout::calculate_document(viewport))
+        }
+        Screen::GitDiff => {
+            render_git_diff(frame, state, &crate::layout::calculate_document(viewport))
+        }
         _ => unreachable!("render_git_mode only handles Git screens"),
     }
 }
 
-fn render_git_status(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
+fn render_git_status(frame: &mut Frame<'_>, state: &AppState, layout: &GitStatusLayout) {
     let Some(view) = &state.git_status_view else {
         render_git_body(
             frame,
-            metrics.list,
+            layout.changes,
             vec![Line::raw("Loading Git status...")],
         );
         render_git_footer(
             frame,
-            metrics,
+            &layout.shell,
             "Esc Return to files",
             &git_status_keys(false),
         );
         return;
     };
-    let capacity = metrics.list.height as usize;
+    let capacity = layout.changes.height as usize;
     let start = view
         .selected
         .checked_div(capacity.max(1))
@@ -330,14 +349,14 @@ fn render_git_status(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMe
                 Span::styled(prefix.to_string(), base),
                 Span::styled(marker.text.clone(), marker_style),
                 Span::styled(
-                    pad_or_truncate(&name, metrics.list.width as usize - used),
+                    pad_or_truncate(&name, layout.changes.width as usize - used),
                     base,
                 ),
             ])
         })
         .collect();
-    render_git_body(frame, metrics.list, rows);
-    render_git_status_preview(frame, state, metrics);
+    render_git_body(frame, layout.changes, rows);
+    render_git_status_preview(frame, state, layout.diff_preview);
     let selected = view
         .rows
         .get(view.selected)
@@ -345,14 +364,14 @@ fn render_git_status(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMe
         .unwrap_or_else(|| "No changed files".into());
     render_git_footer(
         frame,
-        metrics,
+        &layout.shell,
         &format!("{selected}  │  Esc Files"),
         &git_status_keys(state.git_status_preview_side_by_side),
     );
 }
 
-fn render_git_status_preview(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
-    let Some(area) = metrics.preview else {
+fn render_git_status_preview(frame: &mut Frame<'_>, state: &AppState, area: Option<Rect>) {
+    let Some(area) = area else {
         return;
     };
     if state.git_status_preview_side_by_side
@@ -383,8 +402,8 @@ fn render_git_status_preview(frame: &mut Frame<'_>, state: &AppState, metrics: &
     );
 }
 
-fn render_git_stashes(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
-    let capacity = metrics.list.height as usize;
+fn render_git_stashes(frame: &mut Frame<'_>, state: &AppState, layout: &DocumentLayout) {
+    let capacity = layout.document.height as usize;
     let start = page_start(state.git_stash_selected, capacity);
     let rows: Vec<_> = state
         .git_stashes
@@ -395,7 +414,7 @@ fn render_git_stashes(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutM
         .map(|(index, entry)| {
             git_selection_line(
                 format!("  {}  {}", entry.reference, entry.message),
-                metrics.list.width as usize,
+                layout.document.width as usize,
                 index == state.git_stash_selected,
             )
         })
@@ -405,36 +424,36 @@ fn render_git_stashes(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutM
     } else {
         rows
     };
-    render_git_body(frame, metrics.list, content);
+    render_git_body(frame, layout.document, content);
     render_git_footer(
         frame,
-        metrics,
+        &layout.shell,
         "Up/Down Select  Enter Apply  Esc Git Status",
         &git_stash_keys(),
     );
 }
 
-fn render_git_diff(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
+fn render_git_diff(frame: &mut Frame<'_>, state: &AppState, layout: &DocumentLayout) {
     let Some((path, viewer)) = &state.git_diff else {
         return;
     };
     if state.git_diff_side_by_side
         && let crate::model::viewer::ViewerState::Ready(document) = viewer
     {
-        let rows = side_by_side_diff_rows(document, metrics.list.width as usize);
+        let rows = side_by_side_diff_rows(document, layout.document.width as usize);
         let top = document.top_line.min(rows.len().saturating_sub(1));
         let total = rows.len();
         render_git_body(
             frame,
-            metrics.list,
+            layout.document,
             rows.into_iter()
                 .skip(top)
-                .take(metrics.list.height as usize)
+                .take(layout.document.height as usize)
                 .collect(),
         );
         render_git_footer(
             frame,
-            metrics,
+            &layout.shell,
             &format!(
                 "{}  │  Row {}/{}  Left: before  Right: after  Esc Git Status",
                 path.display(),
@@ -447,7 +466,7 @@ fn render_git_diff(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetr
     }
     render_mode_document(
         frame,
-        metrics,
+        layout,
         viewer,
         &format!(
             "{}  │  Up/Down Scroll  PgUp/PgDn Page  Ctrl+F Find  Esc Git Status",
@@ -558,8 +577,8 @@ fn side_by_side_line(
     ])
 }
 
-fn render_git_log(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
-    let capacity = metrics.list.height as usize;
+fn render_git_log(frame: &mut Frame<'_>, state: &AppState, layout: &DocumentLayout) {
+    let capacity = layout.document.height as usize;
     let start = page_start(state.git_log_selected, capacity);
     let rows: Vec<_> = state
         .git_log
@@ -582,50 +601,30 @@ fn render_git_log(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetri
                     entry.subject,
                     references,
                 ),
-                metrics.list.width as usize,
+                layout.document.width as usize,
                 index == state.git_log_selected,
             )
         })
         .collect();
-    render_git_body(frame, metrics.list, rows);
+    render_git_body(frame, layout.document, rows);
     render_git_footer(
         frame,
-        metrics,
+        &layout.shell,
         "Up/Down Select  Enter Detail  Esc Git Status",
         &git_log_keys(),
     );
 }
 
-fn render_git_log_detail(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
+fn render_git_log_detail(frame: &mut Frame<'_>, state: &AppState, layout: &GitCommitLayout) {
     let Some(detail) = &state.git_log_detail else {
         return;
     };
-    let left_width = (metrics.list.width.saturating_mul(42) / 100)
-        .clamp(24, metrics.list.width.saturating_sub(20));
-    let left = Rect::new(
-        metrics.list.x,
-        metrics.list.y,
-        left_width,
-        metrics.list.height,
-    );
-    let right = Rect::new(
-        metrics.list.x.saturating_add(left_width).saturating_add(1),
-        metrics.list.y,
-        metrics
-            .list
-            .width
-            .saturating_sub(left_width.saturating_add(1)),
-        metrics.list.height,
-    );
-    let separator = "│\n".repeat(metrics.list.height as usize);
+    let left = layout.commit_and_files;
+    let right = layout.diff;
+    let separator = "│\n".repeat(layout.separator.height as usize);
     frame.render_widget(
         Paragraph::new(separator).style(palette::role(ThemeRole::ColumnSeparator)),
-        Rect::new(
-            metrics.list.x.saturating_add(left_width),
-            metrics.list.y,
-            1,
-            metrics.list.height,
-        ),
+        layout.separator,
     );
 
     let summary_height = left.height.min(8);
@@ -699,7 +698,7 @@ fn render_git_log_detail(frame: &mut Frame<'_>, state: &AppState, metrics: &Layo
     );
     render_git_footer(
         frame,
-        metrics,
+        &layout.shell,
         "Up/Down File  PgUp/PgDn Diff  F4 Side-by-side  Esc Git Log",
         &git_diff_keys(detail.side_by_side),
     );
@@ -760,8 +759,8 @@ fn render_git_detail_diff(
     render_git_body(frame, area, lines);
 }
 
-fn render_git_branches(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
-    let capacity = metrics.list.height as usize;
+fn render_git_branches(frame: &mut Frame<'_>, state: &AppState, layout: &DocumentLayout) {
+    let capacity = layout.document.height as usize;
     let start = page_start(state.git_branch_selected, capacity);
     let rows: Vec<_> = state
         .git_branches
@@ -776,15 +775,15 @@ fn render_git_branches(frame: &mut Frame<'_>, state: &AppState, metrics: &Layout
                     if branch.current { "*" } else { " " },
                     branch.name
                 ),
-                metrics.list.width as usize,
+                layout.document.width as usize,
                 index == state.git_branch_selected,
             )
         })
         .collect();
-    render_git_body(frame, metrics.list, rows);
+    render_git_body(frame, layout.document, rows);
     render_git_footer(
         frame,
-        metrics,
+        &layout.shell,
         "Up/Down Target  Enter Switch  Esc Git Status",
         &git_branch_keys(),
     );
@@ -812,13 +811,13 @@ fn git_selection_line(text: String, width: usize, selected: bool) -> Line<'stati
 
 fn render_mode_document(
     frame: &mut Frame<'_>,
-    metrics: &LayoutMetrics,
+    layout: &DocumentLayout,
     viewer: &crate::model::viewer::ViewerState,
     help: &str,
     keys: &[(u8, &str)],
 ) {
     use crate::model::viewer::ViewerState;
-    let body_height = metrics.list.height as usize;
+    let body_height = layout.document.height as usize;
     let lines = match viewer {
         ViewerState::Loading { .. } => vec![Line::raw("Loading...")],
         ViewerState::Binary => vec![Line::raw("Binary preview is not available.")],
@@ -828,12 +827,12 @@ fn render_mode_document(
             .map(|line| {
                 Line::raw(pad_or_truncate(
                     document.line(line),
-                    metrics.list.width as usize,
+                    layout.document.width as usize,
                 ))
             })
             .collect(),
     };
-    render_git_body(frame, metrics.list, lines);
+    render_git_body(frame, layout.document, lines);
     let status = match viewer {
         ViewerState::Ready(document) => format!(
             "Line {}/{}  │  {help}",
@@ -845,22 +844,22 @@ fn render_mode_document(
         ),
         _ => help.to_string(),
     };
-    render_git_footer(frame, metrics, &status, keys);
+    render_git_footer(frame, &layout.shell, &status, keys);
 }
 
 fn render_git_footer(
     frame: &mut Frame<'_>,
-    metrics: &LayoutMetrics,
+    shell: &ShellLayout,
     status: &str,
     keys: &[(u8, &str)],
 ) {
     render_status_line(
         frame,
         status,
-        metrics.item_detail,
+        shell.status_bar,
         palette::role(ThemeRole::StatusBar),
     );
-    render_function_bar(frame, metrics.function_bar, keys);
+    render_function_bar(frame, shell.function_bar, keys);
 }
 
 fn git_status_keys(side_by_side: bool) -> [(u8, &'static str); 12] {
@@ -1040,21 +1039,28 @@ fn render_settings(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
     );
 }
 
-fn render_favorites_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
-    frame.render_widget(Clear, metrics.viewport);
+fn render_favorites_mode(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
+    let layout = crate::layout::calculate_document(Viewport {
+        width: viewport.width,
+        height: viewport.height,
+    });
+    frame.render_widget(Clear, layout.shell.viewport);
     frame.render_widget(
         Block::default().style(palette::role(ThemeRole::MainBackground)),
-        metrics.viewport,
+        layout.shell.viewport,
     );
 
     let title = format!("{}  [FAVORITES]", state.current_path.display());
     frame.render_widget(
-        Paragraph::new(pad_or_truncate(&title, metrics.path_bar.width as usize))
-            .style(palette::role(ThemeRole::PathBar)),
-        metrics.path_bar,
+        Paragraph::new(pad_or_truncate(
+            &title,
+            layout.shell.path_bar.width as usize,
+        ))
+        .style(palette::role(ThemeRole::PathBar)),
+        layout.shell.path_bar,
     );
 
-    let capacity = metrics.list.height as usize;
+    let capacity = layout.document.height as usize;
     let start = page_start(state.favorites.selected(), capacity);
     let mut lines: Vec<Line<'_>> = state
         .favorites
@@ -1071,7 +1077,7 @@ fn render_favorites_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &Layo
                     entry.label,
                     entry.path.display()
                 ),
-                metrics.list.width as usize,
+                layout.document.width as usize,
                 index == state.favorites.selected(),
             )
         })
@@ -1079,7 +1085,7 @@ fn render_favorites_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &Layo
     if lines.is_empty() {
         lines.push(Line::raw("(no favorite directories)"));
     }
-    render_git_body(frame, metrics.list, lines);
+    render_git_body(frame, layout.document, lines);
 
     let selected = state
         .favorites
@@ -1088,23 +1094,30 @@ fn render_favorites_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &Layo
         .unwrap_or_else(|| "No favorite directories".into());
     render_git_footer(
         frame,
-        metrics,
+        &layout.shell,
         &format!("{selected}  │  Up/Down Select  Enter Open  Ctrl+Up/Down Reorder  Esc Files"),
         &favorites_keys(),
     );
 }
 
-fn render_amazon_build_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
-    frame.render_widget(Clear, metrics.viewport);
+fn render_amazon_build_mode(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
+    let layout = crate::layout::calculate_document(Viewport {
+        width: viewport.width,
+        height: viewport.height,
+    });
+    frame.render_widget(Clear, layout.shell.viewport);
     frame.render_widget(
         Block::default().style(palette::role(ThemeRole::MainBackground)),
-        metrics.viewport,
+        layout.shell.viewport,
     );
     let title = format!("{}  [AMAZON BUILD]", state.current_path.display());
     frame.render_widget(
-        Paragraph::new(pad_or_truncate(&title, metrics.path_bar.width as usize))
-            .style(palette::role(ThemeRole::PathBar)),
-        metrics.path_bar,
+        Paragraph::new(pad_or_truncate(
+            &title,
+            layout.shell.path_bar.width as usize,
+        ))
+        .style(palette::role(ThemeRole::PathBar)),
+        layout.shell.path_bar,
     );
     let selected = state.amazon_build.selected();
     let mut rows = Vec::new();
@@ -1127,23 +1140,23 @@ fn render_amazon_build_mode(frame: &mut Frame<'_>, state: &AppState, metrics: &L
         }
         rows.push(git_selection_line(
             format!("  {:<30} {}", command.label(), actual),
-            metrics.list.width as usize,
+            layout.document.width as usize,
             index == selected,
         ));
     }
-    let start = page_start(selected_row, metrics.list.height as usize);
+    let start = page_start(selected_row, layout.document.height as usize);
     render_git_body(
         frame,
-        metrics.list,
+        layout.document,
         rows.into_iter()
             .skip(start)
-            .take(metrics.list.height as usize)
+            .take(layout.document.height as usize)
             .collect(),
     );
     let command = state.amazon_build.command();
     render_git_footer(
         frame,
-        metrics,
+        &layout.shell,
         &format!(
             "{}  │  Up/Down Select  Enter/F3 Run  Esc Files",
             command.label()
@@ -1628,11 +1641,15 @@ fn render_confirm_dialog(frame: &mut Frame<'_>, state: &AppState, viewport: Rect
     );
 }
 
-fn render_viewer(frame: &mut Frame<'_>, metrics: &LayoutMetrics, state: &AppState) {
-    frame.render_widget(Clear, metrics.viewport);
+fn render_viewer(frame: &mut Frame<'_>, viewport: Rect, state: &AppState) {
+    let layout = crate::layout::calculate_document(Viewport {
+        width: viewport.width,
+        height: viewport.height,
+    });
+    frame.render_widget(Clear, layout.shell.viewport);
     frame.render_widget(
         Block::default().style(palette::role(ThemeRole::MainBackground)),
-        metrics.viewport,
+        layout.shell.viewport,
     );
     let (path, viewer) = match &state.viewer {
         Some(value) => value,
@@ -1640,14 +1657,17 @@ fn render_viewer(frame: &mut Frame<'_>, metrics: &LayoutMetrics, state: &AppStat
     };
     let title = format!("{}  [VIEW]", path.display());
     frame.render_widget(
-        Paragraph::new(pad_or_truncate(&title, metrics.path_bar.width as usize))
-            .style(palette::role(ThemeRole::PathBar)),
-        metrics.path_bar,
+        Paragraph::new(pad_or_truncate(
+            &title,
+            layout.shell.path_bar.width as usize,
+        ))
+        .style(palette::role(ThemeRole::PathBar)),
+        layout.shell.path_bar,
     );
     let git_modified = state.viewer_is_git_modified();
     render_mode_document(
         frame,
-        metrics,
+        &layout,
         viewer,
         if git_modified {
             "Arrows Scroll  F3 Diff  F4 Side-by-Side  Ctrl+F Find  Esc Files"
@@ -2527,6 +2547,44 @@ mod tests {
     }
 
     #[test]
+    fn git_commit_detail_uses_columns_beyond_the_browser_preview_boundary() {
+        let mut state = state_with(Vec::new(), 160, 40);
+        state.screen = Screen::GitLogDetail;
+        let diff = format!("{}right-edge-marker\n", "x".repeat(70));
+        state.git_log_detail = Some(crate::app::GitLogDetailState {
+            hash: "0123456789abcdef".into(),
+            worktree_root: PathBuf::from("/work"),
+            summary: crate::model::viewer::ViewerDocument::decode(b"commit detail\n".to_vec()),
+            files: vec![crate::plugins::git::history::GitCommitFile {
+                status: "M".into(),
+                path: PathBuf::from("src/main.rs"),
+                old_path: None,
+            }],
+            selected: 0,
+            diff: crate::model::viewer::ViewerDocument::decode(diff.into_bytes()),
+            diff_generation: 1,
+            side_by_side: false,
+        });
+
+        let output = rendered(&state, 160, 40);
+        assert!(output.contains("right-edge-marker"));
+    }
+
+    #[test]
+    fn viewer_uses_columns_beyond_the_browser_preview_boundary() {
+        let mut state = state_with(Vec::new(), 160, 40);
+        let document = format!("{}viewer-right-edge-marker\n", "x".repeat(120));
+        state.viewer = Some((
+            PathBuf::from("/work/readme.md"),
+            crate::model::viewer::ViewerDocument::decode(document.into_bytes()),
+        ));
+        state.screen = Screen::Viewer;
+
+        let output = rendered(&state, 160, 40);
+        assert!(output.contains("viewer-right-edge-marker"));
+    }
+
+    #[test]
     fn git_diff_f4_renders_before_and_after_side_by_side() {
         let mut state = state_with(Vec::new(), 100, 25);
         state.screen = Screen::GitDiff;
@@ -3049,6 +3107,7 @@ mod tests {
             .collect();
         let mut state = state_with(entries, 128, 25);
         state.long_view = true;
+        state.layout_settings.preview.enabled = false;
         let metrics = crate::layout::calculate_for_view(
             state.viewport,
             state.layout_settings,

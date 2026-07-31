@@ -759,8 +759,10 @@ fn is_attention_message(message: &str) -> bool {
 }
 
 fn load_selected_git_log_diff(state: &mut AppState) -> Option<Effect> {
-    let directory = state.current_path.clone();
     let detail = state.git_log_detail.as_mut()?;
+    // Commit file paths come from `git show --name-status` and are relative to
+    // the worktree root, not necessarily to the directory where Git mode was opened.
+    let directory = detail.worktree_root.clone();
     let file = detail.files.get(detail.selected)?.clone();
     detail.diff_generation = detail.diff_generation.wrapping_add(1);
     let generation = detail.diff_generation;
@@ -3674,11 +3676,13 @@ mod tests {
                 },
             )
             .as_slice(),
-            [Effect::LoadGitLogDetailDiff { generation: 1, file, .. }] if file.path == first
+            [Effect::LoadGitLogDetailDiff { directory, generation: 1, file, .. }]
+                if directory == &PathBuf::from("/test") && file.path == first
         ));
         assert!(matches!(
             reduce(&mut app, Action::GitLogDetailMove(1)).as_slice(),
-            [Effect::LoadGitLogDetailDiff { generation: 2, file, .. }] if file.path == second
+            [Effect::LoadGitLogDetailDiff { directory, generation: 2, file, .. }]
+                if directory == &PathBuf::from("/test") && file.path == second
         ));
         reduce(
             &mut app,
