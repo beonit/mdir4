@@ -244,7 +244,7 @@ impl Default for CommandRegistry {
             function(Id::Move, 6, "Move", true),
             function(Id::MakeDirectory, 7, "Dir", true),
             function(Id::Delete, 8, "Del", true),
-            function(Id::Shell, 9, "Shell", true),
+            function(Id::Shell, 9, "---", false),
             function(Id::Mcd, 10, "MCD", true),
             function(Id::Settings, 12, "Settings", true),
         ]);
@@ -605,6 +605,22 @@ mod tests {
             hints
                 .iter()
                 .all(|hint| matches!(hint.availability, CommandAvailability::Disabled { .. }))
+        );
+    }
+
+    #[test]
+    fn f9_is_reserved_while_shell_remains_available_to_the_bang_mapper() {
+        let registry = CommandRegistry::default();
+
+        assert!(
+            registry
+                .action_for(KeyChord::plain(KeyCode::Function(9)))
+                .is_none()
+        );
+        assert!(
+            registry
+                .function_commands()
+                .any(|command| command.function_key == Some(9) && command.label == "---")
         );
     }
 }

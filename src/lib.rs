@@ -13,6 +13,7 @@ pub mod plugins;
 pub mod ports;
 pub mod remote;
 pub mod runtime;
+pub mod syntax;
 pub mod theme;
 pub mod ui;
 

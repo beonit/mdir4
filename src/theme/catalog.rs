@@ -44,6 +44,17 @@ impl Theme {
                         .styles
                         .insert(role, Style::default().fg(Color::White).bg(Color::Black));
                 }
+                theme.styles.insert(
+                    ThemeRole::ViewerSearchMatch,
+                    Style::default().fg(Color::Black).bg(Color::White),
+                );
+                theme.styles.insert(
+                    ThemeRole::ViewerSearchCurrent,
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::White)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                );
             }
             "light" => {
                 for role in all_roles() {
@@ -51,6 +62,20 @@ impl Theme {
                         .styles
                         .insert(role, Style::default().fg(Color::Black).bg(Color::White));
                 }
+                theme.styles.insert(
+                    ThemeRole::ViewerSearchMatch,
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                );
+                theme.styles.insert(
+                    ThemeRole::ViewerSearchCurrent,
+                    Style::default()
+                        .fg(Color::White)
+                        .bg(Color::Magenta)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                );
             }
             _ => {}
         }
@@ -107,7 +132,7 @@ fn default_base() -> String {
     "classic".to_string()
 }
 
-fn all_roles() -> [ThemeRole; 32] {
+fn all_roles() -> [ThemeRole; 49] {
     use ThemeRole::*;
     [
         MainBackground,
@@ -120,6 +145,23 @@ fn all_roles() -> [ThemeRole; 32] {
         FunctionLabel,
         Viewer,
         ViewerBorder,
+        SyntaxComment,
+        SyntaxKeyword,
+        SyntaxString,
+        SyntaxNumber,
+        SyntaxType,
+        SyntaxFunction,
+        SyntaxVariable,
+        SyntaxConstant,
+        SyntaxAttribute,
+        SyntaxTag,
+        SyntaxHeading,
+        SyntaxLink,
+        SyntaxMacro,
+        SyntaxOperator,
+        SyntaxPunctuation,
+        ViewerSearchMatch,
+        ViewerSearchCurrent,
         Dialog,
         DialogBorder,
         Warning,

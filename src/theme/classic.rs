@@ -21,8 +21,63 @@ impl ClassicTheme {
                 .fg(Color::Black)
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-            ThemeRole::Viewer => Style::default().fg(Color::Gray).bg(Color::Black),
-            ThemeRole::ViewerBorder => Style::default().fg(Color::Cyan).bg(Color::Black),
+            ThemeRole::Viewer => Style::default()
+                .fg(Color::Rgb(169, 183, 198))
+                .bg(Color::Rgb(43, 43, 43)),
+            ThemeRole::ViewerBorder => Style::default()
+                .fg(Color::Rgb(169, 183, 198))
+                .bg(Color::Rgb(43, 43, 43)),
+            ThemeRole::SyntaxComment => Style::default()
+                .fg(Color::Rgb(128, 128, 128))
+                .bg(Color::Rgb(43, 43, 43))
+                .add_modifier(Modifier::ITALIC),
+            ThemeRole::SyntaxKeyword => Style::default()
+                .fg(Color::Rgb(204, 120, 50))
+                .bg(Color::Rgb(43, 43, 43)),
+            ThemeRole::SyntaxString => Style::default()
+                .fg(Color::Rgb(106, 135, 89))
+                .bg(Color::Rgb(43, 43, 43)),
+            ThemeRole::SyntaxNumber => Style::default()
+                .fg(Color::Rgb(104, 151, 187))
+                .bg(Color::Rgb(43, 43, 43)),
+            ThemeRole::SyntaxType | ThemeRole::SyntaxVariable => Style::default()
+                .fg(Color::Rgb(169, 183, 198))
+                .bg(Color::Rgb(43, 43, 43)),
+            ThemeRole::SyntaxFunction => Style::default()
+                .fg(Color::Rgb(32, 176, 212))
+                .bg(Color::Rgb(43, 43, 43)),
+            ThemeRole::SyntaxConstant => Style::default()
+                .fg(Color::Rgb(152, 118, 170))
+                .bg(Color::Rgb(43, 43, 43)),
+            ThemeRole::SyntaxAttribute => Style::default()
+                .fg(Color::Rgb(187, 181, 41))
+                .bg(Color::Rgb(43, 43, 43)),
+            ThemeRole::SyntaxTag => Style::default()
+                .fg(Color::Rgb(232, 191, 106))
+                .bg(Color::Rgb(43, 43, 43))
+                .add_modifier(Modifier::BOLD),
+            ThemeRole::SyntaxHeading => Style::default()
+                .fg(Color::Rgb(255, 198, 109))
+                .bg(Color::Rgb(43, 43, 43))
+                .add_modifier(Modifier::BOLD),
+            ThemeRole::SyntaxLink => Style::default()
+                .fg(Color::Rgb(40, 123, 222))
+                .bg(Color::Rgb(43, 43, 43))
+                .add_modifier(Modifier::UNDERLINED),
+            ThemeRole::SyntaxMacro => Style::default()
+                .fg(Color::Rgb(255, 198, 109))
+                .bg(Color::Rgb(43, 43, 43)),
+            ThemeRole::SyntaxOperator | ThemeRole::SyntaxPunctuation => Style::default()
+                .fg(Color::Rgb(169, 183, 198))
+                .bg(Color::Rgb(43, 43, 43)),
+            ThemeRole::ViewerSearchMatch => Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+            ThemeRole::ViewerSearchCurrent => Style::default()
+                .fg(Color::White)
+                .bg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
             ThemeRole::StatusBar => Style::default().fg(Color::White).bg(Color::DarkGray),
             ThemeRole::MessageBar => Style::default().fg(Color::White).bg(Color::Black),
             ThemeRole::Dialog => Style::default().fg(Color::White).bg(Color::Magenta),

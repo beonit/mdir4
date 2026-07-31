@@ -826,6 +826,12 @@ impl EffectWorker {
                         });
                         Action::GitStatusPreviewLoaded { path, result }
                     }
+                    Effect::HighlightGitStatusPreview { path, document } => {
+                        Action::GitStatusPreviewSyntaxLoaded {
+                            syntax: document.syntax_for_diff_path(path.as_path()),
+                            path,
+                        }
+                    }
                     Effect::LoadGitDiff { directory, path } => {
                         let backend = GitCliReadBackend;
                         let display_path = path.as_path().to_path_buf();
@@ -863,6 +869,10 @@ impl EffectWorker {
                         });
                         Action::GitDiffLoaded { path, result }
                     }
+                    Effect::HighlightGitDiff { path, document } => Action::GitDiffSyntaxLoaded {
+                        syntax: document.syntax_for_diff_path(&path),
+                        path,
+                    },
                     Effect::LoadGitLog(directory) => {
                         let result = GitCliHistoryBackend.log(&directory, 200);
                         Action::GitLogLoaded { result }
@@ -1034,9 +1044,15 @@ impl EffectWorker {
                         }
                     }
                     Effect::LoadViewer(path) => {
-                        let result = filesystem.read_file(&path, 32 * 1024 * 1024);
+                        let result = filesystem
+                            .read_file(&path, 32 * 1024 * 1024)
+                            .map(crate::model::viewer::ViewerState::decode);
                         Action::ViewerLoaded { path, result }
                     }
+                    Effect::HighlightViewer { path, document } => Action::ViewerSyntaxLoaded {
+                        syntax: document.syntax_for_path(&path),
+                        path,
+                    },
                     Effect::LoadPreview { path, generation } => {
                         let result = filesystem.read_file(&path, 1024 * 1024);
                         Action::PreviewLoaded {
@@ -1045,6 +1061,15 @@ impl EffectWorker {
                             result,
                         }
                     }
+                    Effect::HighlightPreview {
+                        path,
+                        generation,
+                        document,
+                    } => Action::PreviewSyntaxLoaded {
+                        syntax: document.syntax_for_path(&path),
+                        path,
+                        generation,
+                    },
                     Effect::LoadPreviewDiff {
                         directory,
                         path,

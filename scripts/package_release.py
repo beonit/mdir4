@@ -63,6 +63,19 @@ def license_inventory(metadata: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def syntax_acknowledgements(root: Path) -> str:
+    result = subprocess.run(
+        ["cargo", "run", "--quiet", "--locked", "--bin", "generate_syntax_notice"],
+        cwd=root,
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    if not result.stdout.strip():
+        raise RuntimeError("syntax acknowledgement generator returned no content")
+    return result.stdout
+
+
 def archive_name(version: str, target: str) -> str:
     return f"mdir4-v{version}-{target}"
 
@@ -97,6 +110,9 @@ def main() -> int:
         shutil.copy2(root / "docs" / "development.md", package_dir / "DEVELOPMENT.md")
         (package_dir / "THIRD_PARTY_LICENSES.txt").write_text(
             license_inventory(metadata), encoding="utf-8"
+        )
+        (package_dir / "SYNTAX_ACKNOWLEDGEMENTS.md").write_text(
+            syntax_acknowledgements(root), encoding="utf-8"
         )
         if archive.exists():
             archive.unlink()

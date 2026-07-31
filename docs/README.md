@@ -85,6 +85,11 @@ M4 이후 backlog에는 MCD viewport, 외부 `$EDITOR` 연결, Rename 중간 커
 순서는 [`locate-search-implementation-plan.md`](locate-search-implementation-plan.md)에 있다.
 이 트랙도 `LOC-00` 승인 전까지 현재 활성 릴리스 작업을 선점하지 않는다.
 
+제안된 full-screen View mode의 syntax highlighting, malformed source fallback, theme/search
+합성과 worker 경계는
+[`viewer-syntax-highlighting-implementation-plan.md`](viewer-syntax-highlighting-implementation-plan.md)에
+있다. 이 트랙은 `SH-00` 승인 전까지 dependency나 source 변경을 시작하지 않는다.
+
 Git/Viewer 등 full-screen mode가 Browser Preview geometry를 잘못 공유하는 문제의 근본
 수정과 재발 방지 테스트 계획은
 [`screen-layout-refactor-plan.md`](screen-layout-refactor-plan.md)에 있다.

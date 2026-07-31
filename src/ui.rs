@@ -388,16 +388,20 @@ fn render_git_status_preview(frame: &mut Frame<'_>, state: &AppState, area: Opti
         );
         return;
     }
-    let text = match state.git_status_preview.as_ref().map(|(_, viewer)| viewer) {
-        Some(crate::model::viewer::ViewerState::Ready(document)) => document.text.clone(),
-        Some(crate::model::viewer::ViewerState::Loading { .. }) => "Loading diff...".into(),
-        Some(crate::model::viewer::ViewerState::Error(error)) => {
-            format!("Diff unavailable: {error}")
+    let lines = match state.git_status_preview.as_ref().map(|(_, viewer)| viewer) {
+        Some(crate::model::viewer::ViewerState::Ready(document)) => (0..area.height as usize)
+            .map(|line| git_diff_document_line(document, line, area.width as usize))
+            .collect(),
+        Some(crate::model::viewer::ViewerState::Loading { .. }) => {
+            vec![Line::raw("Loading diff...")]
         }
-        _ => "No diff available.".into(),
+        Some(crate::model::viewer::ViewerState::Error(error)) => {
+            vec![Line::raw(format!("Diff unavailable: {error}"))]
+        }
+        _ => vec![Line::raw("No diff available.")],
     };
     frame.render_widget(
-        Paragraph::new(text).block(Block::default().title(" Diff ").borders(Borders::LEFT)),
+        Paragraph::new(lines).block(Block::default().title(" Diff ").borders(Borders::LEFT)),
         area,
     );
 }
@@ -464,7 +468,7 @@ fn render_git_diff(frame: &mut Frame<'_>, state: &AppState, layout: &DocumentLay
         );
         return;
     }
-    render_mode_document(
+    render_git_diff_document(
         frame,
         layout,
         viewer,
@@ -474,6 +478,40 @@ fn render_git_diff(frame: &mut Frame<'_>, state: &AppState, layout: &DocumentLay
         ),
         &git_diff_keys(false),
     );
+}
+
+fn render_git_diff_document(
+    frame: &mut Frame<'_>,
+    layout: &DocumentLayout,
+    viewer: &crate::model::viewer::ViewerState,
+    help: &str,
+    keys: &[(u8, &str)],
+) {
+    use crate::model::viewer::ViewerState;
+
+    let body_height = layout.document.height as usize;
+    let lines = match viewer {
+        ViewerState::Loading { .. } => vec![Line::raw("Loading...")],
+        ViewerState::Binary => vec![Line::raw("Binary preview is not available.")],
+        ViewerState::TooLarge => vec![Line::raw("Content is too large to view (maximum 32 MiB).")],
+        ViewerState::Error(error) => vec![Line::raw(error)],
+        ViewerState::Ready(document) => (document.top_line..document.top_line + body_height)
+            .map(|line| git_diff_document_line(document, line, layout.document.width as usize))
+            .collect(),
+    };
+    render_git_body(frame, layout.document, lines);
+    let status = match viewer {
+        ViewerState::Ready(document) => format!(
+            "Line {}/{}  │  {help}",
+            document
+                .top_line
+                .saturating_add(1)
+                .min(document.lines.len()),
+            document.lines.len()
+        ),
+        _ => help.to_string(),
+    };
+    render_git_footer(frame, &layout.shell, &status, keys);
 }
 
 fn side_by_side_diff_rows(
@@ -824,12 +862,7 @@ fn render_mode_document(
         ViewerState::TooLarge => vec![Line::raw("Content is too large to view (maximum 32 MiB).")],
         ViewerState::Error(error) => vec![Line::raw(error)],
         ViewerState::Ready(document) => (document.top_line..document.top_line + body_height)
-            .map(|line| {
-                Line::raw(pad_or_truncate(
-                    document.line(line),
-                    layout.document.width as usize,
-                ))
-            })
+            .map(|line| viewer_document_line(document, line, layout.document.width as usize))
             .collect(),
     };
     render_git_body(frame, layout.document, lines);
@@ -845,6 +878,185 @@ fn render_mode_document(
         _ => help.to_string(),
     };
     render_git_footer(frame, &layout.shell, &status, keys);
+}
+
+fn viewer_document_line(
+    document: &crate::model::viewer::ViewerDocument,
+    line: usize,
+    width: usize,
+) -> Line<'static> {
+    let text = document.line(line);
+    let search_ranges = viewer_search_ranges(document, line, text);
+    let Some(syntax_spans) = document.syntax_spans(line) else {
+        if !search_ranges.is_empty() {
+            return viewer_spans_line(text, &[], &search_ranges, width);
+        }
+        return Line::from(Span::styled(
+            pad_or_truncate(text, width),
+            palette::role(ThemeRole::Viewer),
+        ));
+    };
+
+    viewer_spans_line(text, syntax_spans, &search_ranges, width)
+}
+
+fn git_diff_document_line(
+    document: &crate::model::viewer::ViewerDocument,
+    line: usize,
+    width: usize,
+) -> Line<'static> {
+    let text = document.line(line);
+    let line_style = if is_added_diff_line(text) {
+        palette::role(ThemeRole::GitAdded)
+    } else if is_deleted_diff_line(text) {
+        palette::role(ThemeRole::GitDeleted)
+    } else {
+        palette::role(ThemeRole::Viewer)
+    };
+    let Some(syntax_spans) = document.syntax_spans(line) else {
+        return Line::from(Span::styled(pad_or_truncate(text, width), line_style));
+    };
+
+    let mut boundaries = Vec::with_capacity(syntax_spans.len().saturating_mul(2).saturating_add(2));
+    boundaries.extend([0, text.len()]);
+    for span in syntax_spans {
+        boundaries.extend([span.start, span.end]);
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+
+    let mut spans = Vec::with_capacity(boundaries.len().saturating_add(1));
+    for window in boundaries.windows(2) {
+        let (start, end) = (window[0], window[1]);
+        if start == end {
+            continue;
+        }
+        let style = syntax_spans
+            .iter()
+            .find(|span| span.start <= start && start < span.end)
+            .map(|span| {
+                let mut style = syntax_style(span.kind);
+                if let Some(background) = line_style.bg {
+                    style = style.bg(background);
+                }
+                style
+            })
+            .unwrap_or(line_style);
+        spans.push(Span::styled(text[start..end].to_string(), style));
+    }
+    let used = crate::layout::text::cell_width(text);
+    if used < width {
+        spans.push(Span::styled(" ".repeat(width - used), line_style));
+    }
+    Line::from(spans)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewerSearchStyle {
+    Match,
+    Current,
+}
+
+fn viewer_search_ranges(
+    document: &crate::model::viewer::ViewerDocument,
+    line: usize,
+    text: &str,
+) -> Vec<(usize, usize, ViewerSearchStyle)> {
+    let Some(query) = document.search.as_deref().filter(|query| !query.is_empty()) else {
+        return Vec::new();
+    };
+    let style = if document.matches.get(document.current_match) == Some(&line) {
+        ViewerSearchStyle::Current
+    } else {
+        ViewerSearchStyle::Match
+    };
+    text.match_indices(query)
+        .map(|(start, matched)| (start, start + matched.len(), style))
+        .collect()
+}
+
+fn viewer_spans_line(
+    text: &str,
+    syntax_spans: &[crate::syntax::SyntaxSpan],
+    search_ranges: &[(usize, usize, ViewerSearchStyle)],
+    width: usize,
+) -> Line<'static> {
+    let mut boundaries = Vec::with_capacity(
+        syntax_spans
+            .len()
+            .saturating_mul(2)
+            .saturating_add(search_ranges.len().saturating_mul(2))
+            .saturating_add(2),
+    );
+    boundaries.extend([0, text.len()]);
+    for span in syntax_spans {
+        boundaries.extend([span.start, span.end]);
+    }
+    for &(start, end, _) in search_ranges {
+        boundaries.extend([start, end]);
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+
+    let mut spans = Vec::with_capacity(boundaries.len());
+    for window in boundaries.windows(2) {
+        let (start, end) = (window[0], window[1]);
+        if start == end {
+            continue;
+        }
+        let style = search_ranges
+            .iter()
+            .find(|(range_start, range_end, _)| *range_start <= start && start < *range_end)
+            .map(|(_, _, style)| viewer_search_style(*style))
+            .or_else(|| {
+                syntax_spans
+                    .iter()
+                    .find(|span| span.start <= start && start < span.end)
+                    .map(|span| syntax_style(span.kind))
+            })
+            .unwrap_or_else(|| palette::role(ThemeRole::Viewer));
+        spans.push(Span::styled(text[start..end].to_string(), style));
+    }
+
+    let used = crate::layout::text::cell_width(text);
+    if used < width {
+        spans.push(Span::styled(
+            " ".repeat(width - used),
+            palette::role(ThemeRole::Viewer),
+        ));
+    }
+    Line::from(spans)
+}
+
+fn viewer_search_style(style: ViewerSearchStyle) -> Style {
+    let role = match style {
+        ViewerSearchStyle::Match => ThemeRole::ViewerSearchMatch,
+        ViewerSearchStyle::Current => ThemeRole::ViewerSearchCurrent,
+    };
+    palette::role(role)
+}
+
+fn syntax_style(kind: crate::syntax::SyntaxKind) -> Style {
+    use crate::syntax::SyntaxKind;
+
+    let role = match kind {
+        SyntaxKind::Comment => ThemeRole::SyntaxComment,
+        SyntaxKind::Keyword => ThemeRole::SyntaxKeyword,
+        SyntaxKind::String => ThemeRole::SyntaxString,
+        SyntaxKind::Number => ThemeRole::SyntaxNumber,
+        SyntaxKind::Type => ThemeRole::SyntaxType,
+        SyntaxKind::Function => ThemeRole::SyntaxFunction,
+        SyntaxKind::Variable => ThemeRole::SyntaxVariable,
+        SyntaxKind::Constant => ThemeRole::SyntaxConstant,
+        SyntaxKind::Attribute => ThemeRole::SyntaxAttribute,
+        SyntaxKind::Tag => ThemeRole::SyntaxTag,
+        SyntaxKind::Heading => ThemeRole::SyntaxHeading,
+        SyntaxKind::Link => ThemeRole::SyntaxLink,
+        SyntaxKind::Macro => ThemeRole::SyntaxMacro,
+        SyntaxKind::Operator => ThemeRole::SyntaxOperator,
+        SyntaxKind::Punctuation => ThemeRole::SyntaxPunctuation,
+    };
+    palette::role(role)
 }
 
 fn render_git_footer(
@@ -1204,7 +1416,7 @@ fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
     };
     frame.render_widget(Clear, viewport);
     frame.render_widget(
-        Block::default().style(palette::role(ThemeRole::McdBackground)),
+        Block::default().style(palette::role(ThemeRole::MainBackground)),
         viewport,
     );
     if tree.is_loading_path(&state.current_path) {
@@ -1212,11 +1424,11 @@ fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
         frame.render_widget(
             Paragraph::new("Loading current directory tree…")
                 .alignment(Alignment::Center)
-                .style(palette::role(ThemeRole::McdBackground)),
+                .style(palette::role(ThemeRole::MainBackground)),
             message,
         );
         frame.render_widget(
-            Paragraph::new("Esc Cancel").style(palette::role(ThemeRole::McdBackground)),
+            Paragraph::new("Esc Cancel").style(palette::role(ThemeRole::MainBackground)),
             Rect::new(
                 viewport.x,
                 viewport.y.saturating_add(viewport.height.saturating_sub(1)),
@@ -1248,7 +1460,7 @@ fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
     frame.render_widget(
         Paragraph::new(title)
             .alignment(Alignment::Center)
-            .style(palette::role(ThemeRole::McdBackground)),
+            .style(palette::role(ThemeRole::MainBackground)),
         header,
     );
     if let Some(selected) = tree.selected_node() {
@@ -1352,16 +1564,16 @@ fn render_mcd(frame: &mut Frame<'_>, state: &AppState, viewport: Rect) {
                 let name_style = if *id == selected.id {
                     palette::role(ThemeRole::EntryCursor)
                 } else {
-                    palette::role(ThemeRole::McdBackground)
+                    palette::role(ThemeRole::MainBackground)
                 };
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::styled(branch, palette::role(ThemeRole::McdBackground)),
+                        Span::styled(branch, palette::role(ThemeRole::MainBackground)),
                         Span::styled(name, name_style),
-                        Span::styled(marker, palette::role(ThemeRole::McdBackground)),
-                        Span::styled(tail, palette::role(ThemeRole::McdBackground)),
+                        Span::styled(marker, palette::role(ThemeRole::MainBackground)),
+                        Span::styled(tail, palette::role(ThemeRole::MainBackground)),
                     ]))
-                    .style(palette::role(ThemeRole::McdBackground)),
+                    .style(palette::role(ThemeRole::MainBackground)),
                     Rect::new(x as u16, y, available as u16, 1),
                 );
             }
@@ -1655,7 +1867,14 @@ fn render_viewer(frame: &mut Frame<'_>, viewport: Rect, state: &AppState) {
         Some(value) => value,
         None => return,
     };
-    let title = format!("{}  [VIEW]", path.display());
+    let language = match viewer {
+        crate::model::viewer::ViewerState::Ready(document) => document.syntax_language(),
+        _ => None,
+    };
+    let title = match language {
+        Some(language) => format!("{}  [VIEW:{language}]", path.display()),
+        None => format!("{}  [VIEW]", path.display()),
+    };
     frame.render_widget(
         Paragraph::new(pad_or_truncate(
             &title,
@@ -1877,10 +2096,18 @@ fn render_preview_placeholder(frame: &mut Frame<'_>, state: &AppState, metrics: 
     let Some(area) = metrics.preview else {
         return;
     };
+    let width = area.width.saturating_sub(1) as usize;
+    let lines = match state.preview.as_ref().map(|(_, _, content)| content) {
+        Some(crate::model::viewer::ViewerState::Ready(document)) => (document.top_line
+            ..document.top_line + area.height as usize)
+            .map(|line| viewer_document_line(document, line, width))
+            .collect(),
+        _ => vec![Line::raw(preview_text(state))],
+    };
     frame.render_widget(
-        Paragraph::new(preview_text(state))
+        Paragraph::new(lines)
             .block(Block::default().title(" Preview ").borders(Borders::LEFT))
-            .style(palette::role(ThemeRole::MainBackground)),
+            .style(palette::role(ThemeRole::Viewer)),
         area,
     );
 }
@@ -2605,6 +2832,51 @@ mod tests {
         assert!(output.contains("Left: before  Right: after"));
     }
 
+    #[test]
+    fn unified_rust_git_diff_uses_syntax_spans_after_diff_markers() {
+        use ratatui::style::Color;
+
+        let mut state = state_with(Vec::new(), 100, 25);
+        let path = PathBuf::from("src/main.rs");
+        let mut viewer = crate::model::viewer::ViewerDocument::decode(
+            b"diff --git a/src/main.rs b/src/main.rs\n@@ -1 +1 @@\n-let answer = 1;\n+let answer = 42;\n"
+                .to_vec(),
+        );
+        let crate::model::viewer::ViewerState::Ready(document) = &mut viewer else {
+            panic!("expected text diff");
+        };
+        document.set_syntax(document.syntax_for_diff_path(&path));
+        state.git_diff = Some((path, viewer));
+        state.screen = Screen::GitDiff;
+        let metrics = crate::layout::calculate_for_view(
+            state.viewport,
+            state.layout_settings,
+            state.entries.len(),
+            state.long_view,
+        );
+        let backend = TestBackend::new(100, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| render(frame, &state, &metrics))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|cell| cell.fg == Color::Rgb(104, 151, 187))
+        );
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|cell| cell.fg == Color::LightGreen)
+        );
+        assert!(buffer.content.iter().any(|cell| cell.fg == Color::LightRed));
+    }
+
     fn entry(name: &str, kind: EntryKind, size: u64) -> FileEntry {
         FileEntry::new(
             PathBuf::from("/work").join(name),
@@ -2673,6 +2945,151 @@ mod tests {
         assert!(!output.contains("stale-main.txt"));
         assert!(!output.contains("Files 1"));
         assert!(!output.contains("┌ View:"));
+    }
+
+    #[test]
+    fn rust_viewer_uses_syntax_spans_and_a_language_badge() {
+        use ratatui::style::Color;
+
+        let mut state = state_with(Vec::new(), 80, 25);
+        let path = PathBuf::from("/work/main.rs");
+        state.viewer = Some((
+            path.clone(),
+            crate::model::viewer::ViewerState::decode_for_path(
+                b"fn main() { let answer: u64 = 42; println!(\"hello\"); return; }\n".to_vec(),
+                &path,
+            ),
+        ));
+        state.screen = Screen::Viewer;
+        let metrics = crate::layout::calculate_for_entries(
+            state.viewport,
+            state.layout_settings,
+            state.entries.len(),
+        );
+        let backend = TestBackend::new(80, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| render(frame, &state, &metrics))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|cell| cell.fg == Color::Rgb(204, 120, 50))
+        );
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|cell| cell.fg == Color::Rgb(106, 135, 89))
+        );
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|cell| cell.fg == Color::Rgb(104, 151, 187))
+        );
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|cell| cell.fg == Color::Rgb(255, 198, 109))
+        );
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|cell| cell.fg == Color::Rgb(32, 176, 212))
+        );
+        let output = rendered(&state, 80, 25);
+        assert!(output.contains("/work/main.rs  [VIEW:RUST]"));
+    }
+
+    #[test]
+    fn rust_preview_uses_syntax_spans() {
+        use ratatui::style::Color;
+
+        let mut state = state_with(Vec::new(), 160, 40);
+        let path = PathBuf::from("/work/preview.rs");
+        state.preview = Some((
+            path.clone(),
+            1,
+            crate::model::viewer::ViewerState::decode_for_path(
+                b"fn preview() { println!(\"hello\"); return; }\n".to_vec(),
+                &path,
+            ),
+        ));
+        let metrics = crate::layout::calculate_for_view(
+            state.viewport,
+            state.layout_settings,
+            state.entries.len(),
+            state.long_view,
+        );
+        let backend = TestBackend::new(160, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| render(frame, &state, &metrics))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|cell| cell.fg == Color::Rgb(204, 120, 50))
+        );
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|cell| cell.fg == Color::Rgb(106, 135, 89))
+        );
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|cell| cell.bg == Color::Rgb(43, 43, 43))
+        );
+    }
+
+    #[test]
+    fn viewer_search_overlay_takes_priority_over_syntax_colors() {
+        use ratatui::style::Color;
+
+        let mut state = state_with(Vec::new(), 80, 25);
+        let path = PathBuf::from("/work/main.rs");
+        state.viewer = Some((
+            path.clone(),
+            crate::model::viewer::ViewerState::decode_for_path(
+                b"let answer = 1;\nlet answer = 2;\n".to_vec(),
+                &path,
+            ),
+        ));
+        let Some((_, crate::model::viewer::ViewerState::Ready(document))) = state.viewer.as_mut()
+        else {
+            panic!("expected text viewer");
+        };
+        document.search("answer".to_string());
+        state.screen = Screen::Viewer;
+        let metrics = crate::layout::calculate_for_entries(
+            state.viewport,
+            state.layout_settings,
+            state.entries.len(),
+        );
+        let backend = TestBackend::new(80, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| render(frame, &state, &metrics))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert!(buffer.content.iter().any(|cell| cell.bg == Color::Magenta));
+        assert!(buffer.content.iter().any(|cell| cell.bg == Color::Yellow));
     }
 
     #[test]
@@ -2955,7 +3372,7 @@ mod tests {
         }
         let (x, y) = library_cell.expect("selected Library must be visible");
         assert_eq!(buffer[(x, y)].bg, Color::Cyan);
-        assert_eq!(buffer[(x.saturating_sub(1), y)].bg, Color::Blue);
+        assert_eq!(buffer[(x.saturating_sub(1), y)].bg, Color::Black);
     }
 
     #[test]

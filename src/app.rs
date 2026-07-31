@@ -28,7 +28,7 @@ use crate::{
         locate::{LocatePhase, LocateResult, LocateState},
         operation::OperationSummary,
         selection,
-        viewer::ViewerState,
+        viewer::{ViewerDocument, ViewerState},
     },
     operations::planner::validate_name,
     ports::filesystem::FsError,
@@ -154,12 +154,21 @@ pub enum Action {
     CancelDialog,
     ViewerLoaded {
         path: PathBuf,
-        result: Result<Vec<u8>, FsError>,
+        result: Result<ViewerState, FsError>,
+    },
+    ViewerSyntaxLoaded {
+        path: PathBuf,
+        syntax: Option<crate::syntax::SyntaxDocument>,
     },
     PreviewLoaded {
         path: PathBuf,
         generation: u64,
         result: Result<Vec<u8>, FsError>,
+    },
+    PreviewSyntaxLoaded {
+        path: PathBuf,
+        generation: u64,
+        syntax: Option<crate::syntax::SyntaxDocument>,
     },
     PreviewDiffLoaded {
         path: PathBuf,
@@ -278,6 +287,10 @@ pub enum Action {
         path: crate::plugins::git::model::RepoRelativePath,
         result: Result<String, String>,
     },
+    GitStatusPreviewSyntaxLoaded {
+        path: crate::plugins::git::model::RepoRelativePath,
+        syntax: Option<crate::syntax::SyntaxDocument>,
+    },
     GitStatusMove(i32),
     GitStatusPage(i32),
     GitStatusHome,
@@ -363,6 +376,10 @@ pub enum Action {
         path: PathBuf,
         result: Result<String, String>,
     },
+    GitDiffSyntaxLoaded {
+        path: PathBuf,
+        syntax: Option<crate::syntax::SyntaxDocument>,
+    },
     GitDiffLine(i32),
     GitDiffPage(i32),
     GitDiffHome,
@@ -402,9 +419,18 @@ pub enum Effect {
     },
     CreateDirectory(PathBuf),
     LoadViewer(PathBuf),
+    HighlightViewer {
+        path: PathBuf,
+        document: ViewerDocument,
+    },
     LoadPreview {
         path: PathBuf,
         generation: u64,
+    },
+    HighlightPreview {
+        path: PathBuf,
+        generation: u64,
+        document: ViewerDocument,
     },
     LoadPreviewDiff {
         directory: PathBuf,
@@ -467,6 +493,10 @@ pub enum Effect {
         directory: PathBuf,
         path: crate::plugins::git::model::RepoRelativePath,
     },
+    HighlightGitStatusPreview {
+        path: crate::plugins::git::model::RepoRelativePath,
+        document: ViewerDocument,
+    },
     LoadGitDiff {
         directory: PathBuf,
         path: crate::plugins::git::model::RepoRelativePath,
@@ -474,6 +504,10 @@ pub enum Effect {
     LoadGitDiffForPath {
         directory: PathBuf,
         path: PathBuf,
+    },
+    HighlightGitDiff {
+        path: PathBuf,
+        document: ViewerDocument,
     },
     LoadGitLog(PathBuf),
     LoadGitLogDetail {
@@ -1323,13 +1357,26 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.git_status_preview_side_by_side = !state.git_status_preview_side_by_side;
         }
         Action::GitStatusPreviewLoaded { path, result } => {
-            state.git_status_preview = Some((
-                path,
-                match result {
-                    Ok(diff) => ViewerState::decode(diff.into_bytes()),
-                    Err(error) => ViewerState::Error(error),
-                },
-            ));
+            let viewer = match result {
+                Ok(diff) => ViewerState::decode(diff.into_bytes()),
+                Err(error) => ViewerState::Error(error),
+            };
+            let effect = match &viewer {
+                ViewerState::Ready(document) => Some(Effect::HighlightGitStatusPreview {
+                    path: path.clone(),
+                    document: document.clone(),
+                }),
+                _ => None,
+            };
+            state.git_status_preview = Some((path, viewer));
+            return effect.into_iter().collect();
+        }
+        Action::GitStatusPreviewSyntaxLoaded { path, syntax } => {
+            if let Some((current, ViewerState::Ready(document))) = &mut state.git_status_preview
+                && *current == path
+            {
+                document.set_syntax(syntax);
+            }
         }
         Action::GitStatusToggleMark => {
             if let Some(view) = &mut state.git_status_view {
@@ -1774,13 +1821,26 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 .as_ref()
                 .is_some_and(|(current, _)| current == &path)
             {
-                state.git_diff = Some((
-                    path,
-                    match result {
-                        Ok(diff) => ViewerState::decode(diff.into_bytes()),
-                        Err(error) => ViewerState::Error(error),
-                    },
-                ));
+                let viewer = match result {
+                    Ok(diff) => ViewerState::decode(diff.into_bytes()),
+                    Err(error) => ViewerState::Error(error),
+                };
+                let effect = match &viewer {
+                    ViewerState::Ready(document) => Some(Effect::HighlightGitDiff {
+                        path: path.clone(),
+                        document: document.clone(),
+                    }),
+                    _ => None,
+                };
+                state.git_diff = Some((path, viewer));
+                return effect.into_iter().collect();
+            }
+        }
+        Action::GitDiffSyntaxLoaded { path, syntax } => {
+            if let Some((current, ViewerState::Ready(document))) = &mut state.git_diff
+                && *current == path
+            {
+                document.set_syntax(syntax);
             }
         }
         action @ (Action::GitDiffLine(delta) | Action::GitDiffPage(delta)) => {
@@ -2368,14 +2428,27 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 .as_ref()
                 .is_some_and(|(current, _)| current == &path)
             {
-                state.viewer = Some((
-                    path,
-                    match result {
-                        Ok(bytes) => ViewerState::decode(bytes),
-                        Err(FsError::TooLarge { .. }) => ViewerState::TooLarge,
-                        Err(error) => ViewerState::Error(error.to_string()),
-                    },
-                ));
+                let viewer = match result {
+                    Ok(viewer) => viewer,
+                    Err(FsError::TooLarge { .. }) => ViewerState::TooLarge,
+                    Err(error) => ViewerState::Error(error.to_string()),
+                };
+                let effect = match &viewer {
+                    ViewerState::Ready(document) => Some(Effect::HighlightViewer {
+                        path: path.clone(),
+                        document: document.clone(),
+                    }),
+                    _ => None,
+                };
+                state.viewer = Some((path, viewer));
+                return effect.into_iter().collect();
+            }
+        }
+        Action::ViewerSyntaxLoaded { path, syntax } => {
+            if let Some((current, ViewerState::Ready(document))) = &mut state.viewer
+                && *current == path
+            {
+                document.set_syntax(syntax);
             }
         }
         Action::PreviewLoaded {
@@ -2397,18 +2470,41 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                     Err(error) => ViewerState::Error(error.to_string()),
                 };
                 state.preview = Some((path.clone(), generation, content));
+                let mut effects = Vec::new();
+                if let Some((_, _, ViewerState::Ready(document))) = &state.preview {
+                    effects.push(Effect::HighlightPreview {
+                        path: path.clone(),
+                        generation,
+                        document: document.clone(),
+                    });
+                }
                 if state.git_modified_paths.contains(&path)
                     && state
                         .preview
                         .as_ref()
                         .is_some_and(|(_, _, content)| matches!(content, ViewerState::Ready(_)))
                 {
-                    return vec![Effect::LoadPreviewDiff {
+                    effects.push(Effect::LoadPreviewDiff {
                         directory: state.current_path.clone(),
-                        path,
+                        path: path.clone(),
                         generation,
-                    }];
+                    });
                 }
+                return effects;
+            }
+        }
+        Action::PreviewSyntaxLoaded {
+            path,
+            generation,
+            syntax,
+        } => {
+            if generation == state.preview_generation
+                && let Some((current, current_generation, ViewerState::Ready(document))) =
+                    &mut state.preview
+                && *current == path
+                && *current_generation == generation
+            {
+                document.set_syntax(syntax);
             }
         }
         Action::PreviewDiffLoaded {
@@ -3636,6 +3732,46 @@ mod tests {
     }
 
     #[test]
+    fn git_diff_loads_text_before_path_bound_syntax() {
+        let mut app = state();
+        let path = PathBuf::from("src/main.rs");
+        app.git_diff = Some((path.clone(), ViewerState::Loading { generation: 1 }));
+
+        let effects = reduce(
+            &mut app,
+            Action::GitDiffLoaded {
+                path: path.clone(),
+                result: Ok("diff --git a/src/main.rs b/src/main.rs\n+let answer = 42;\n".into()),
+            },
+        );
+        let [
+            Effect::HighlightGitDiff {
+                path: effect_path,
+                document,
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("expected path-bound git diff syntax effect");
+        };
+        assert!(matches!(
+            app.git_diff,
+            Some((_, ViewerState::Ready(ref document))) if document.syntax_language().is_none()
+        ));
+
+        reduce(
+            &mut app,
+            Action::GitDiffSyntaxLoaded {
+                path,
+                syntax: document.syntax_for_diff_path(effect_path),
+            },
+        );
+        assert!(matches!(
+            app.git_diff,
+            Some((_, ViewerState::Ready(ref document))) if document.syntax_language() == Some("RUST")
+        ));
+    }
+
+    #[test]
     fn git_log_detail_selects_changed_files_and_ignores_stale_diffs() {
         let mut app = state();
         let hash = "abc123".to_string();
@@ -3923,6 +4059,127 @@ mod tests {
             app.viewer,
             Some((_, ViewerState::Ready(ref viewer)))
                 if viewer.current_match == 1 && viewer.top_line == 2
+        ));
+    }
+
+    #[test]
+    fn viewer_loads_text_before_path_bound_syntax_and_ignores_stale_completions() {
+        let mut app = state();
+        let path = PathBuf::from("/test/a.rs");
+        app.viewer = Some((path.clone(), ViewerState::Loading { generation: 1 }));
+        app.screen = Screen::Viewer;
+
+        reduce(
+            &mut app,
+            Action::ViewerLoaded {
+                path: PathBuf::from("/test/stale.rs"),
+                result: Ok(ViewerState::decode(b"fn stale() {}\n".to_vec())),
+            },
+        );
+        assert!(matches!(
+            app.viewer,
+            Some((_, ViewerState::Loading { generation: 1 }))
+        ));
+
+        let effects = reduce(
+            &mut app,
+            Action::ViewerLoaded {
+                path: path.clone(),
+                result: Ok(ViewerState::decode(b"fn current() {}\n".to_vec())),
+            },
+        );
+        let [
+            Effect::HighlightViewer {
+                path: effect_path,
+                document,
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("expected path-bound syntax effect");
+        };
+        assert_eq!(effect_path, &path);
+        assert!(matches!(
+            app.viewer,
+            Some((_, ViewerState::Ready(ref document)))
+                if document.syntax_language().is_none()
+        ));
+
+        let Some((_, ViewerState::Ready(current))) = app.viewer.as_mut() else {
+            panic!("expected text viewer");
+        };
+        current.search("current".to_string());
+        reduce(
+            &mut app,
+            Action::ViewerSyntaxLoaded {
+                path,
+                syntax: document.syntax_for_path(effect_path),
+            },
+        );
+        assert!(matches!(
+            app.viewer,
+            Some((_, ViewerState::Ready(ref document)))
+                if document.syntax_language() == Some("RUST")
+                    && document.search.as_deref() == Some("current")
+        ));
+    }
+
+    #[test]
+    fn preview_loads_text_before_path_bound_syntax_and_ignores_stale_completions() {
+        let mut app = state();
+        let path = PathBuf::from("/test/preview.rs");
+        app.preview_generation = 7;
+        app.preview = Some((path.clone(), 7, ViewerState::Loading { generation: 7 }));
+
+        let effects = reduce(
+            &mut app,
+            Action::PreviewLoaded {
+                path: path.clone(),
+                generation: 7,
+                result: Ok(b"fn preview() { println!(\"ready\"); }\n".to_vec()),
+            },
+        );
+        let [
+            Effect::HighlightPreview {
+                path: effect_path,
+                generation,
+                document,
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("expected path-bound preview syntax effect");
+        };
+        assert_eq!(effect_path, &path);
+        assert_eq!(*generation, 7);
+        assert!(matches!(
+            app.preview,
+            Some((_, 7, ViewerState::Ready(ref document))) if document.syntax_language().is_none()
+        ));
+
+        reduce(
+            &mut app,
+            Action::PreviewSyntaxLoaded {
+                path: path.clone(),
+                generation: 6,
+                syntax: document.syntax_for_path(effect_path),
+            },
+        );
+        assert!(matches!(
+            app.preview,
+            Some((_, 7, ViewerState::Ready(ref document))) if document.syntax_language().is_none()
+        ));
+
+        reduce(
+            &mut app,
+            Action::PreviewSyntaxLoaded {
+                path,
+                generation: 7,
+                syntax: document.syntax_for_path(effect_path),
+            },
+        );
+        assert!(matches!(
+            app.preview,
+            Some((_, 7, ViewerState::Ready(ref document)))
+                if document.syntax_language() == Some("RUST")
         ));
     }
 

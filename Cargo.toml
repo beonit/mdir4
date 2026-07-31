@@ -3,6 +3,7 @@ name = "mdir4"
 version = "0.1.0"
 edition = "2024"
 description = "A modern terminal file manager inspired by Mdir III"
+default-run = "mdir4"
 
 [profile.release]
 strip = true
@@ -20,6 +21,7 @@ shell-words = "1.1.0"
 thiserror = "2.0.19"
 toml = "0.9.8"
 trash = "5.2.3"
+two-face = { version = "0.5.1", default-features = false, features = ["syntect-fancy"] }
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.2"
 
