@@ -869,7 +869,36 @@ impl EffectWorker {
                     }
                     Effect::LoadGitLogDetail { directory, hash } => {
                         let result = GitCliHistoryBackend.detail(&directory, &hash);
-                        Action::GitLogDetailLoaded { result }
+                        Action::GitLogDetailLoaded { hash, result }
+                    }
+                    Effect::LoadGitLogDetailDiff {
+                        directory,
+                        hash,
+                        file,
+                        generation,
+                    } => {
+                        let path = file.path.clone();
+                        let result = GitCliHistoryBackend.file_diff(&directory, &hash, &file);
+                        Action::GitLogDetailDiffLoaded {
+                            hash,
+                            path,
+                            generation,
+                            result,
+                        }
+                    }
+                    Effect::CheckGitLogDetailFile(target) => {
+                        let exists = target.is_file();
+                        Action::GitLogDetailFileChecked { target, exists }
+                    }
+                    Effect::CheckGitStatusFile { directory, path } => {
+                        let target = GitCliReadBackend
+                            .discover(&directory)
+                            .ok()
+                            .flatten()
+                            .map(|repository| repository.worktree_root.join(path.as_path()))
+                            .unwrap_or_else(|| directory.join(path.as_path()));
+                        let exists = target.is_file();
+                        Action::GitStatusFileChecked { target, exists }
                     }
                     Effect::LoadGitBranches(directory) => {
                         let result = GitCliBranchBackend.list(&directory);
@@ -1679,6 +1708,7 @@ mod tests {
             locate: None,
             locate_generation: 0,
             pending_reveal: None,
+            pending_git_status_reveal: false,
             viewport: Viewport {
                 width: 80,
                 height: 25,

@@ -600,13 +600,164 @@ fn render_git_log_detail(frame: &mut Frame<'_>, state: &AppState, metrics: &Layo
     let Some(detail) = &state.git_log_detail else {
         return;
     };
-    render_mode_document(
+    let left_width = (metrics.list.width.saturating_mul(42) / 100)
+        .clamp(24, metrics.list.width.saturating_sub(20));
+    let left = Rect::new(
+        metrics.list.x,
+        metrics.list.y,
+        left_width,
+        metrics.list.height,
+    );
+    let right = Rect::new(
+        metrics.list.x.saturating_add(left_width).saturating_add(1),
+        metrics.list.y,
+        metrics
+            .list
+            .width
+            .saturating_sub(left_width.saturating_add(1)),
+        metrics.list.height,
+    );
+    let separator = "│\n".repeat(metrics.list.height as usize);
+    frame.render_widget(
+        Paragraph::new(separator).style(palette::role(ThemeRole::ColumnSeparator)),
+        Rect::new(
+            metrics.list.x.saturating_add(left_width),
+            metrics.list.y,
+            1,
+            metrics.list.height,
+        ),
+    );
+
+    let summary_height = left.height.min(8);
+    let summary_lines = viewer_lines(
+        &detail.summary,
+        left.width as usize,
+        summary_height as usize,
+    );
+    render_git_body(
+        frame,
+        Rect::new(left.x, left.y, left.width, summary_height),
+        summary_lines,
+    );
+    let file_y = left.y.saturating_add(summary_height);
+    let file_height = left.height.saturating_sub(summary_height.saturating_add(1));
+    frame.render_widget(
+        Paragraph::new(" Changed files ").style(palette::role(ThemeRole::StatusBar)),
+        Rect::new(left.x, file_y, left.width, 1),
+    );
+    let file_area = Rect::new(left.x, file_y.saturating_add(1), left.width, file_height);
+    let start = page_start(detail.selected, file_area.height as usize);
+    let files = detail
+        .files
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(file_area.height as usize)
+        .map(|(index, file)| {
+            let old = file
+                .old_path
+                .as_ref()
+                .map(|path| format!("{} → ", path.display()))
+                .unwrap_or_default();
+            git_selection_line(
+                format!(" {}  {old}{}", file.status, file.path.display()),
+                file_area.width as usize,
+                index == detail.selected,
+            )
+        })
+        .collect::<Vec<_>>();
+    render_git_body(
+        frame,
+        file_area,
+        if files.is_empty() {
+            vec![Line::raw("No changed files.")]
+        } else {
+            files
+        },
+    );
+
+    let title = detail
+        .files
+        .get(detail.selected)
+        .map(|file| format!(" Diff: {} ", file.path.display()))
+        .unwrap_or_else(|| " Diff ".to_string());
+    frame.render_widget(
+        Paragraph::new(pad_or_truncate(&title, right.width as usize))
+            .style(palette::role(ThemeRole::StatusBar)),
+        Rect::new(right.x, right.y, right.width, 1),
+    );
+    render_git_detail_diff(
+        frame,
+        Rect::new(
+            right.x,
+            right.y.saturating_add(1),
+            right.width,
+            right.height.saturating_sub(1),
+        ),
+        &detail.diff,
+        detail.side_by_side,
+    );
+    render_git_footer(
         frame,
         metrics,
-        detail,
-        "Up/Down Scroll  Esc Git Log",
-        &git_log_keys(),
+        "Up/Down File  PgUp/PgDn Diff  F4 Side-by-side  Esc Git Log",
+        &git_diff_keys(detail.side_by_side),
     );
+}
+
+fn viewer_lines(
+    viewer: &crate::model::viewer::ViewerState,
+    width: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
+    use crate::model::viewer::ViewerState;
+    match viewer {
+        ViewerState::Loading { .. } => vec![Line::raw("Loading...")],
+        ViewerState::Binary => vec![Line::raw("Binary preview is not available.")],
+        ViewerState::TooLarge => vec![Line::raw("Content is too large to view.")],
+        ViewerState::Error(error) => vec![Line::raw(error.clone())],
+        ViewerState::Ready(document) => (document.top_line..document.top_line + height)
+            .map(|line| Line::raw(pad_or_truncate(document.line(line), width)))
+            .collect(),
+    }
+}
+
+fn render_git_detail_diff(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    viewer: &crate::model::viewer::ViewerState,
+    side_by_side: bool,
+) {
+    use crate::model::viewer::ViewerState;
+    let lines = match viewer {
+        ViewerState::Ready(document) if side_by_side => {
+            let rows = side_by_side_diff_rows(document, area.width as usize);
+            let top = document.top_line.min(rows.len().saturating_sub(1));
+            rows.into_iter()
+                .skip(top)
+                .take(area.height as usize)
+                .collect()
+        }
+        ViewerState::Ready(document) => (document.top_line
+            ..document.top_line + area.height as usize)
+            .map(|line| {
+                let content = document.line(line);
+                let role = if is_added_diff_line(content) {
+                    ThemeRole::GitAdded
+                } else if is_deleted_diff_line(content) {
+                    ThemeRole::GitDeleted
+                } else {
+                    ThemeRole::MainBackground
+                };
+                Line::from(Span::styled(
+                    pad_or_truncate(content, area.width as usize),
+                    palette::role(role),
+                ))
+            })
+            .collect(),
+        _ => viewer_lines(viewer, area.width as usize, area.height as usize),
+    };
+    render_git_body(frame, area, lines);
 }
 
 fn render_git_branches(frame: &mut Frame<'_>, state: &AppState, metrics: &LayoutMetrics) {
@@ -2165,6 +2316,7 @@ mod tests {
             locate: None,
             locate_generation: 0,
             pending_reveal: None,
+            pending_git_status_reveal: false,
             viewport: Viewport { width, height },
             layout_settings: crate::layout::LayoutSettings::default(),
             screen: Screen::Main,
@@ -2342,6 +2494,39 @@ mod tests {
     }
 
     #[test]
+    fn git_log_detail_splits_changed_files_and_selected_diff() {
+        let mut state = state_with(Vec::new(), 100, 25);
+        state.screen = Screen::GitLogDetail;
+        state.git_log_detail = Some(crate::app::GitLogDetailState {
+            hash: "0123456789abcdef".into(),
+            worktree_root: PathBuf::from("/work"),
+            summary: crate::model::viewer::ViewerDocument::decode(
+                b"commit 0123456789abcdef\nAuthor: Test\n\nAdd feature\n".to_vec(),
+            ),
+            files: vec![crate::plugins::git::history::GitCommitFile {
+                status: "M".into(),
+                path: PathBuf::from("src/main.rs"),
+                old_path: None,
+            }],
+            selected: 0,
+            diff: crate::model::viewer::ViewerDocument::decode(
+                b"diff --git a/src/main.rs b/src/main.rs\n-old value\n+new value\n".to_vec(),
+            ),
+            diff_generation: 1,
+            side_by_side: false,
+        });
+
+        let output = rendered(&state, 100, 25);
+        assert!(output.contains("[GIT: COMMIT]"));
+        assert!(output.contains("Changed files"));
+        assert!(output.contains("M  src/main.rs"));
+        assert!(output.contains("Diff: src/main.rs"));
+        assert!(output.contains("-old value"));
+        assert!(output.contains("+new value"));
+        assert!(output.contains("F4 Side"));
+    }
+
+    #[test]
     fn git_diff_f4_renders_before_and_after_side_by_side() {
         let mut state = state_with(Vec::new(), 100, 25);
         state.screen = Screen::GitDiff;
@@ -2511,6 +2696,7 @@ mod tests {
             locate: None,
             locate_generation: 0,
             pending_reveal: None,
+            pending_git_status_reveal: false,
             viewport: Viewport {
                 width: 80,
                 height: 25,

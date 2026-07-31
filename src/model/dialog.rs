@@ -129,6 +129,8 @@ pub enum ConfirmOperation {
     FavoriteDelete {
         index: usize,
     },
+    MissingGitLogFile,
+    MissingGitStatusFile,
 }
 
 fn grapheme_count(text: &str) -> usize {

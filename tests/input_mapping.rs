@@ -126,6 +126,14 @@ fn control_g_opens_git_status_and_escape_closes_the_plugin_view() {
     ));
     assert!(matches!(
         mapper::map_chord(
+            Screen::GitStatus,
+            KeyChord::plain(KeyCode::Enter),
+            &registry
+        ),
+        Some(Action::GitStatusOpenSelected)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
             Screen::GitDiff,
             KeyChord::control(KeyCode::Character('f')),
             &registry
@@ -139,6 +147,38 @@ fn control_g_opens_git_status_and_escape_closes_the_plugin_view() {
             &registry
         ),
         Some(Action::GitDiffToggleSideBySide)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::GitLogDetail,
+            KeyChord::plain(KeyCode::Down),
+            &registry
+        ),
+        Some(Action::GitLogDetailMove(1))
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::GitLogDetail,
+            KeyChord::plain(KeyCode::Enter),
+            &registry
+        ),
+        Some(Action::GitLogDetailOpenSelected)
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::GitLogDetail,
+            KeyChord::plain(KeyCode::PageDown),
+            &registry
+        ),
+        Some(Action::GitLogDetailDiffPage(1))
+    ));
+    assert!(matches!(
+        mapper::map_chord(
+            Screen::GitLogDetail,
+            KeyChord::plain(KeyCode::Function(4)),
+            &registry
+        ),
+        Some(Action::GitLogDetailToggleSideBySide)
     ));
 }
 

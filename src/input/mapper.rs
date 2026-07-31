@@ -135,7 +135,11 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 ..
             } => Some(Action::ShowGitBranches),
             KeyChord {
-                code: KeyCode::Enter | KeyCode::Function(3),
+                code: KeyCode::Enter,
+                ..
+            } => Some(Action::GitStatusOpenSelected),
+            KeyChord {
+                code: KeyCode::Function(3),
                 ..
             } => Some(Action::ShowGitDiff),
             _ => None,
@@ -244,6 +248,36 @@ pub fn map_chord(screen: Screen, chord: KeyChord, registry: &CommandRegistry) ->
                 code: KeyCode::Escape,
                 ..
             } => Some(Action::CloseOverlay),
+            KeyChord {
+                code: KeyCode::Enter,
+                ..
+            } => Some(Action::GitLogDetailOpenSelected),
+            KeyChord {
+                code: KeyCode::Up, ..
+            } => Some(Action::GitLogDetailMove(-1)),
+            KeyChord {
+                code: KeyCode::Down,
+                ..
+            } => Some(Action::GitLogDetailMove(1)),
+            KeyChord {
+                code: KeyCode::PageUp,
+                ..
+            } => Some(Action::GitLogDetailDiffPage(-1)),
+            KeyChord {
+                code: KeyCode::PageDown,
+                ..
+            } => Some(Action::GitLogDetailDiffPage(1)),
+            KeyChord {
+                code: KeyCode::Home,
+                ..
+            } => Some(Action::GitLogDetailDiffHome),
+            KeyChord {
+                code: KeyCode::End, ..
+            } => Some(Action::GitLogDetailDiffEnd),
+            KeyChord {
+                code: KeyCode::Function(4),
+                ..
+            } => Some(Action::GitLogDetailToggleSideBySide),
             _ => None,
         };
     }

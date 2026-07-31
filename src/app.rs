@@ -282,6 +282,11 @@ pub enum Action {
     GitStatusPage(i32),
     GitStatusHome,
     GitStatusEnd,
+    GitStatusOpenSelected,
+    GitStatusFileChecked {
+        target: PathBuf,
+        exists: bool,
+    },
     GitStatusPreviewToggleSideBySide,
     GitStatusToggleMark,
     GitStage,
@@ -303,7 +308,24 @@ pub enum Action {
     GitLogMove(i32),
     ShowGitLogDetail,
     GitLogDetailLoaded {
+        hash: String,
+        result: Result<crate::plugins::git::history::GitCommitDetail, String>,
+    },
+    GitLogDetailMove(i32),
+    GitLogDetailDiffLoaded {
+        hash: String,
+        path: PathBuf,
+        generation: u64,
         result: Result<String, String>,
+    },
+    GitLogDetailDiffPage(i32),
+    GitLogDetailDiffHome,
+    GitLogDetailDiffEnd,
+    GitLogDetailToggleSideBySide,
+    GitLogDetailOpenSelected,
+    GitLogDetailFileChecked {
+        target: PathBuf,
+        exists: bool,
     },
     ShowGitBranches,
     GitBranchesLoaded {
@@ -458,6 +480,17 @@ pub enum Effect {
         directory: PathBuf,
         hash: String,
     },
+    LoadGitLogDetailDiff {
+        directory: PathBuf,
+        hash: String,
+        file: crate::plugins::git::history::GitCommitFile,
+        generation: u64,
+    },
+    CheckGitLogDetailFile(PathBuf),
+    CheckGitStatusFile {
+        directory: PathBuf,
+        path: crate::plugins::git::model::RepoRelativePath,
+    },
     LoadGitBranches(PathBuf),
     CreateGitBranch {
         directory: PathBuf,
@@ -511,6 +544,33 @@ pub enum GitDiffOrigin {
     Viewer,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitLogDetailState {
+    pub hash: String,
+    pub worktree_root: PathBuf,
+    pub summary: ViewerState,
+    pub files: Vec<crate::plugins::git::history::GitCommitFile>,
+    pub selected: usize,
+    pub diff: ViewerState,
+    pub diff_generation: u64,
+    pub side_by_side: bool,
+}
+
+impl GitLogDetailState {
+    fn loading(hash: String) -> Self {
+        Self {
+            hash,
+            worktree_root: PathBuf::new(),
+            summary: ViewerState::Loading { generation: 1 },
+            files: Vec::new(),
+            selected: 0,
+            diff: ViewerState::Loading { generation: 0 },
+            diff_generation: 0,
+            side_by_side: false,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct AppState {
     pub current_path: PathBuf,
@@ -523,6 +583,7 @@ pub struct AppState {
     pub locate: Option<LocateState>,
     pub locate_generation: u64,
     pub pending_reveal: Option<PathBuf>,
+    pub pending_git_status_reveal: bool,
     pub viewport: Viewport,
     pub layout_settings: LayoutSettings,
     pub screen: Screen,
@@ -568,7 +629,7 @@ pub struct AppState {
     pub git_diff_origin: GitDiffOrigin,
     pub git_log: Vec<crate::plugins::git::history::GitLogEntry>,
     pub git_log_selected: usize,
-    pub git_log_detail: Option<ViewerState>,
+    pub git_log_detail: Option<GitLogDetailState>,
     pub git_branches: Vec<crate::plugins::git::branch::GitBranch>,
     pub git_branch_selected: usize,
     pub git_stashes: Vec<crate::plugins::git::stash::GitStashEntry>,
@@ -596,6 +657,7 @@ impl AppState {
             locate: None,
             locate_generation: 0,
             pending_reveal: None,
+            pending_git_status_reveal: false,
             viewport,
             layout_settings: LayoutSettings::default(),
             screen: Screen::Main,
@@ -696,6 +758,27 @@ fn is_attention_message(message: &str) -> bool {
     .any(|needle| message.contains(needle))
 }
 
+fn load_selected_git_log_diff(state: &mut AppState) -> Option<Effect> {
+    let directory = state.current_path.clone();
+    let detail = state.git_log_detail.as_mut()?;
+    let file = detail.files.get(detail.selected)?.clone();
+    detail.diff_generation = detail.diff_generation.wrapping_add(1);
+    let generation = detail.diff_generation;
+    detail.diff = ViewerState::Loading { generation };
+    Some(Effect::LoadGitLogDetailDiff {
+        directory,
+        hash: detail.hash.clone(),
+        file,
+        generation,
+    })
+}
+
+fn selected_git_log_file_target(state: &AppState) -> Option<PathBuf> {
+    let detail = state.git_log_detail.as_ref()?;
+    let file = detail.files.get(detail.selected)?;
+    Some(detail.worktree_root.join(&file.path))
+}
+
 pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
     match action {
         Action::Started => {
@@ -755,7 +838,32 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                     if let Some(index) = state.entries.iter().position(|entry| entry.path == target)
                     {
                         state.selected = index;
+                        state.git_log_detail = None;
+                        state.pending_git_status_reveal = false;
                         state.message = attention;
+                    } else if state.git_log_detail.is_some() {
+                        state.confirm_dialog = Some(ConfirmDialog {
+                            title: "File no longer exists".into(),
+                            message: format!(
+                                "{} is no longer present in the worktree.",
+                                target.display()
+                            ),
+                            confirm_label: "OK".into(),
+                            operation: ConfirmOperation::MissingGitLogFile,
+                        });
+                        state.screen = Screen::ConfirmDialog;
+                    } else if state.pending_git_status_reveal {
+                        state.pending_git_status_reveal = false;
+                        state.confirm_dialog = Some(ConfirmDialog {
+                            title: "File no longer exists".into(),
+                            message: format!(
+                                "{} is no longer present in the worktree.",
+                                target.display()
+                            ),
+                            confirm_label: "OK".into(),
+                            operation: ConfirmOperation::MissingGitStatusFile,
+                        });
+                        state.screen = Screen::ConfirmDialog;
                     } else {
                         state.message = Some("Located file no longer exists.".to_string());
                     }
@@ -1175,6 +1283,40 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 return vec![effect];
             }
         }
+        Action::GitStatusOpenSelected => {
+            if let Some(path) = state
+                .git_status_view
+                .as_ref()
+                .and_then(|view| view.rows.get(view.selected))
+                .map(|row| row.path.clone())
+            {
+                return vec![Effect::CheckGitStatusFile {
+                    directory: state.current_path.clone(),
+                    path,
+                }];
+            }
+        }
+        Action::GitStatusFileChecked { target, exists } => {
+            if state.screen != Screen::GitStatus {
+                return Vec::new();
+            }
+            if exists {
+                let Some(parent) = target.parent().map(Path::to_path_buf) else {
+                    return Vec::new();
+                };
+                state.pending_reveal = Some(target);
+                state.pending_git_status_reveal = true;
+                state.screen = Screen::Main;
+                return vec![Effect::LoadDirectory(parent)];
+            }
+            state.confirm_dialog = Some(ConfirmDialog {
+                title: "File no longer exists".into(),
+                message: format!("{} is no longer present in the worktree.", target.display()),
+                confirm_label: "OK".into(),
+                operation: ConfirmOperation::MissingGitStatusFile,
+            });
+            state.screen = Screen::ConfirmDialog;
+        }
         Action::GitStatusPreviewToggleSideBySide => {
             state.git_status_preview_side_by_side = !state.git_status_preview_side_by_side;
         }
@@ -1471,19 +1613,130 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
         Action::ShowGitLogDetail => {
             if let Some(entry) = state.git_log.get(state.git_log_selected) {
-                state.git_log_detail = Some(ViewerState::Loading { generation: 1 });
+                let hash = entry.hash.clone();
+                state.git_log_detail = Some(GitLogDetailState::loading(hash.clone()));
                 state.screen = Screen::GitLogDetail;
                 return vec![Effect::LoadGitLogDetail {
                     directory: state.current_path.clone(),
-                    hash: entry.hash.clone(),
+                    hash,
                 }];
             }
         }
-        Action::GitLogDetailLoaded { result } => {
-            state.git_log_detail = Some(match result {
-                Ok(detail) => ViewerState::decode(detail.into_bytes()),
-                Err(error) => ViewerState::Error(error),
+        Action::GitLogDetailLoaded { hash, result } => {
+            let Some(detail_state) = &mut state.git_log_detail else {
+                return Vec::new();
+            };
+            if detail_state.hash != hash {
+                return Vec::new();
+            }
+            match result {
+                Ok(detail) => {
+                    detail_state.worktree_root = detail.worktree_root;
+                    detail_state.summary = ViewerState::decode(detail.summary.into_bytes());
+                    detail_state.files = detail.files;
+                    detail_state.selected = 0;
+                    if let Some(effect) = load_selected_git_log_diff(state) {
+                        return vec![effect];
+                    }
+                }
+                Err(error) => detail_state.summary = ViewerState::Error(error),
+            }
+        }
+        Action::GitLogDetailMove(delta) => {
+            if let Some(detail) = &mut state.git_log_detail {
+                detail.selected = detail
+                    .selected
+                    .saturating_add_signed(delta as isize)
+                    .min(detail.files.len().saturating_sub(1));
+                if let Some(effect) = load_selected_git_log_diff(state) {
+                    return vec![effect];
+                }
+            }
+        }
+        Action::GitLogDetailDiffLoaded {
+            hash,
+            path,
+            generation,
+            result,
+        } => {
+            if let Some(detail) = &mut state.git_log_detail
+                && detail.hash == hash
+                && detail.diff_generation == generation
+                && detail
+                    .files
+                    .get(detail.selected)
+                    .is_some_and(|file| file.path == path)
+            {
+                detail.diff = match result {
+                    Ok(diff) => ViewerState::decode(diff.into_bytes()),
+                    Err(error) => ViewerState::Error(error),
+                };
+            }
+        }
+        Action::GitLogDetailDiffPage(delta) => {
+            if let Some(GitLogDetailState {
+                diff: ViewerState::Ready(document),
+                ..
+            }) = &mut state.git_log_detail
+            {
+                if delta < 0 {
+                    document.top_line = document.top_line.saturating_sub(10);
+                } else {
+                    document.top_line =
+                        (document.top_line + 10).min(document.lines.len().saturating_sub(1));
+                }
+            }
+        }
+        Action::GitLogDetailDiffHome => {
+            if let Some(GitLogDetailState {
+                diff: ViewerState::Ready(document),
+                ..
+            }) = &mut state.git_log_detail
+            {
+                document.top_line = 0;
+            }
+        }
+        Action::GitLogDetailDiffEnd => {
+            if let Some(GitLogDetailState {
+                diff: ViewerState::Ready(document),
+                ..
+            }) = &mut state.git_log_detail
+            {
+                document.top_line = document.lines.len().saturating_sub(1);
+            }
+        }
+        Action::GitLogDetailToggleSideBySide => {
+            if let Some(detail) = &mut state.git_log_detail {
+                detail.side_by_side = !detail.side_by_side;
+                if let ViewerState::Ready(document) = &mut detail.diff {
+                    document.top_line = 0;
+                }
+            }
+        }
+        Action::GitLogDetailOpenSelected => {
+            if let Some(target) = selected_git_log_file_target(state) {
+                return vec![Effect::CheckGitLogDetailFile(target)];
+            }
+        }
+        Action::GitLogDetailFileChecked { target, exists } => {
+            if selected_git_log_file_target(state).as_ref() != Some(&target) {
+                return Vec::new();
+            }
+            if exists {
+                let Some(parent) = target.parent().map(Path::to_path_buf) else {
+                    return Vec::new();
+                };
+                state.pending_reveal = Some(target);
+                state.screen = Screen::Main;
+                return vec![Effect::LoadDirectory(parent)];
+            }
+            state.confirm_dialog = Some(ConfirmDialog {
+                title: "File no longer exists".into(),
+                message: format!("{} is no longer present in the worktree.", target.display()),
+                confirm_label: "OK".into(),
+                operation: ConfirmOperation::MissingGitLogFile,
             });
+            state.screen = Screen::ConfirmDialog;
         }
         Action::GitMutationCompleted { action, result } => {
             state.message = Some(match result {
@@ -2017,6 +2270,12 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                         state.favorites.delete_selected(index);
                         state.screen = Screen::Favorites;
                     }
+                    ConfirmOperation::MissingGitLogFile => {
+                        state.screen = Screen::GitLogDetail;
+                    }
+                    ConfirmOperation::MissingGitStatusFile => {
+                        state.screen = Screen::GitStatus;
+                    }
                     ConfirmOperation::OverwriteSave { path } => {
                         if let Some((_, editor)) = &state.editor {
                             state.screen = Screen::Progress;
@@ -2044,6 +2303,12 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             });
             let favorite_confirm = state.confirm_dialog.as_ref().is_some_and(|dialog| {
                 matches!(dialog.operation, ConfirmOperation::FavoriteDelete { .. })
+            });
+            let missing_git_log_file = state.confirm_dialog.as_ref().is_some_and(|dialog| {
+                matches!(dialog.operation, ConfirmOperation::MissingGitLogFile)
+            });
+            let missing_git_status_file = state.confirm_dialog.as_ref().is_some_and(|dialog| {
+                matches!(dialog.operation, ConfirmOperation::MissingGitStatusFile)
             });
             let amazon_dialog = state.input_dialog.as_ref().is_some_and(|dialog| {
                 matches!(
@@ -2073,6 +2338,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 Screen::Mcd
             } else if favorite_dialog || favorite_confirm {
                 Screen::Favorites
+            } else if missing_git_log_file {
+                Screen::GitLogDetail
+            } else if missing_git_status_file {
+                Screen::GitStatus
             } else if amazon_dialog {
                 Screen::AmazonBuild
             } else if git_diff_dialog {
@@ -3173,6 +3442,7 @@ mod tests {
             locate: None,
             locate_generation: 0,
             pending_reveal: None,
+            pending_git_status_reveal: false,
             viewport: Viewport {
                 width: 80,
                 height: 25,
@@ -3279,6 +3549,42 @@ mod tests {
     }
 
     #[test]
+    fn git_status_enter_reveals_the_selected_worktree_file() {
+        let mut app = state();
+        reduce(&mut app, Action::ShowGitStatus);
+        reduce(
+            &mut app,
+            Action::GitStatusLoaded {
+                result: Ok(vec![crate::plugins::git::model::GitStatusRow {
+                    path: crate::plugins::git::model::RepoRelativePath::new("src/changed.rs")
+                        .unwrap(),
+                    status: crate::plugins::git::model::GitStatus::Modified,
+                    old_path: None,
+                }]),
+            },
+        );
+        assert!(matches!(
+            reduce(&mut app, Action::GitStatusOpenSelected).as_slice(),
+            [Effect::CheckGitStatusFile { directory, path }]
+                if directory == Path::new("/test") && path.as_path() == Path::new("src/changed.rs")
+        ));
+        let target = PathBuf::from("/test/src/changed.rs");
+        assert_eq!(
+            reduce(
+                &mut app,
+                Action::GitStatusFileChecked {
+                    target: target.clone(),
+                    exists: true,
+                },
+            ),
+            vec![Effect::LoadDirectory(PathBuf::from("/test/src"))]
+        );
+        assert_eq!(app.screen, Screen::Main);
+        assert_eq!(app.pending_reveal, Some(target));
+        assert!(app.pending_git_status_reveal);
+    }
+
+    #[test]
     fn git_diff_opens_for_the_selected_status_row_and_returns_to_status() {
         let mut app = state();
         reduce(&mut app, Action::ShowGitStatus);
@@ -3325,6 +3631,136 @@ mod tests {
         assert_eq!(app.screen, Screen::GitStatus);
         assert!(app.git_diff.is_none());
         assert!(!app.git_diff_side_by_side);
+    }
+
+    #[test]
+    fn git_log_detail_selects_changed_files_and_ignores_stale_diffs() {
+        let mut app = state();
+        let hash = "abc123".to_string();
+        app.git_log = vec![crate::plugins::git::history::GitLogEntry {
+            hash: hash.clone(),
+            author: "Test".into(),
+            date: "2026-07-30".into(),
+            subject: "Change files".into(),
+            references: String::new(),
+        }];
+        assert!(matches!(
+            reduce(&mut app, Action::ShowGitLogDetail).as_slice(),
+            [Effect::LoadGitLogDetail { hash: requested, .. }] if requested == &hash
+        ));
+        let first = PathBuf::from("src/first.rs");
+        let second = PathBuf::from("src/second.rs");
+        assert!(matches!(
+            reduce(
+                &mut app,
+                Action::GitLogDetailLoaded {
+                    hash: hash.clone(),
+                    result: Ok(crate::plugins::git::history::GitCommitDetail {
+                        worktree_root: PathBuf::from("/test"),
+                        summary: "commit abc123\n\nChange files".into(),
+                        files: vec![
+                            crate::plugins::git::history::GitCommitFile {
+                                status: "M".into(),
+                                path: first.clone(),
+                                old_path: None,
+                            },
+                            crate::plugins::git::history::GitCommitFile {
+                                status: "A".into(),
+                                path: second.clone(),
+                                old_path: None,
+                            },
+                        ],
+                    }),
+                },
+            )
+            .as_slice(),
+            [Effect::LoadGitLogDetailDiff { generation: 1, file, .. }] if file.path == first
+        ));
+        assert!(matches!(
+            reduce(&mut app, Action::GitLogDetailMove(1)).as_slice(),
+            [Effect::LoadGitLogDetailDiff { generation: 2, file, .. }] if file.path == second
+        ));
+        reduce(
+            &mut app,
+            Action::GitLogDetailDiffLoaded {
+                hash: hash.clone(),
+                path: first,
+                generation: 1,
+                result: Ok("stale diff".into()),
+            },
+        );
+        assert!(matches!(
+            app.git_log_detail.as_ref().map(|detail| &detail.diff),
+            Some(ViewerState::Loading { generation: 2 })
+        ));
+        reduce(
+            &mut app,
+            Action::GitLogDetailDiffLoaded {
+                hash,
+                path: second,
+                generation: 2,
+                result: Ok("current diff".into()),
+            },
+        );
+        assert!(matches!(
+            app.git_log_detail.as_ref().map(|detail| &detail.diff),
+            Some(ViewerState::Ready(document)) if document.text == "current diff"
+        ));
+        let target = PathBuf::from("/test/src/second.rs");
+        assert_eq!(
+            reduce(&mut app, Action::GitLogDetailOpenSelected),
+            vec![Effect::CheckGitLogDetailFile(target.clone())]
+        );
+        reduce(
+            &mut app,
+            Action::GitLogDetailFileChecked {
+                target: target.clone(),
+                exists: false,
+            },
+        );
+        assert_eq!(app.screen, Screen::ConfirmDialog);
+        assert!(matches!(
+            app.confirm_dialog.as_ref().map(|dialog| &dialog.operation),
+            Some(ConfirmOperation::MissingGitLogFile)
+        ));
+        reduce(&mut app, Action::CancelDialog);
+        assert_eq!(app.screen, Screen::GitLogDetail);
+        assert_eq!(
+            reduce(&mut app, Action::GitLogDetailOpenSelected),
+            vec![Effect::CheckGitLogDetailFile(target.clone())]
+        );
+        assert_eq!(
+            reduce(
+                &mut app,
+                Action::GitLogDetailFileChecked {
+                    target: target.clone(),
+                    exists: true,
+                },
+            ),
+            vec![Effect::LoadDirectory(PathBuf::from("/test/src"))]
+        );
+        assert_eq!(app.screen, Screen::Main);
+        assert_eq!(app.pending_reveal, Some(target));
+        reduce(
+            &mut app,
+            Action::DirectoryLoaded {
+                path: PathBuf::from("/test/src"),
+                result: Ok(DirectoryListing {
+                    path: PathBuf::from("/test/src"),
+                    entries: vec![FileEntry::new(
+                        PathBuf::from("/test/src/second.rs"),
+                        "second.rs".into(),
+                        EntryKind::File,
+                        0,
+                    )],
+                }),
+            },
+        );
+        assert_eq!(
+            app.selected_entry().map(|entry| &entry.path),
+            Some(&PathBuf::from("/test/src/second.rs"))
+        );
+        assert!(app.git_log_detail.is_none());
     }
 
     #[test]

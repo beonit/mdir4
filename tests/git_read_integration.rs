@@ -294,8 +294,16 @@ fn cli_history_backend_lists_commits_and_reads_the_selected_detail() {
     assert_eq!(entries[0].subject, "second subject");
     assert!(entries[0].references.contains("feature/log-label"));
     let detail = backend.detail(temp.path(), &entries[0].hash).unwrap();
-    assert!(detail.contains("second subject"));
-    assert!(detail.contains("Test User"));
+    assert!(detail.summary.contains("second subject"));
+    assert!(detail.summary.contains("Test User"));
+    assert_eq!(detail.files.len(), 1);
+    assert_eq!(detail.files[0].status, "M");
+    assert_eq!(detail.files[0].path, std::path::PathBuf::from("note.txt"));
+    let diff = backend
+        .file_diff(temp.path(), &entries[0].hash, &detail.files[0])
+        .unwrap();
+    assert!(diff.contains("-one"));
+    assert!(diff.contains("+two"));
 }
 
 #[test]

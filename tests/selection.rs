@@ -32,6 +32,7 @@ fn state() -> AppState {
         locate: None,
         locate_generation: 0,
         pending_reveal: None,
+        pending_git_status_reveal: false,
         viewport: Viewport {
             width: 80,
             height: 25,

@@ -67,6 +67,7 @@ fn ten_thousand_entry_navigation_and_render_smoke() {
         locate: None,
         locate_generation: 0,
         pending_reveal: None,
+        pending_git_status_reveal: false,
         viewport: Viewport {
             width: 160,
             height: 50,
